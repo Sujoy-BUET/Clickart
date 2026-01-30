@@ -3,7 +3,7 @@ import { sql } from "../config/db.js";
 export const getProducts = async (req, res) => {
   try {
     const products = await sql`
-      SELECT * FROM products
+      SELECT * FROM product
       ORDER BY created_at DESC
     `;
     console.log("fetched products", products);
@@ -15,16 +15,16 @@ export const getProducts = async (req, res) => {
 };
 
 export const createProduct = async (req, res) => {
-  const { name, price, image } = req.body;
+  const { product_id, product_name, description, price, stock_quantity ,product_image,seller_id,category_id,brand_id} = req.body;
 
-  if (!name || !price || !image) {
+  if (!product_id || !product_name || !price || !stock_quantity || !seller_id || !category_id || !brand_id) {
     return res.status(400).json({ success: false, message: "All fields are required" });
   }
 
   try {
     const newProduct = await sql`
-      INSERT INTO products (name,price,image)
-      VALUES (${name},${price},${image})
+      INSERT INTO product(product_id,product_name,description,price,stock_quantity,product_image,seller_id,category_id,brand_id)
+      VALUES (${product_id},${product_name},${description},${price},${stock_quantity},${product_image},${seller_id},${category_id},${brand_id})
       RETURNING *
     `;
 
@@ -52,12 +52,14 @@ export const getProduct = async (req, res) => {
 
 export const updateProduct = async (req, res) => {
   const { id } = req.params;
-  const { name, price, image } = req.body;
+  const {product_id, product_name, description, price, stock_quantity ,product_image,seller_id,category_id,brand_id } = req.body;
 
   try {
     const updateProduct = await sql`
-      UPDATE products
-      SET name=${name}, price=${price}, image=${image}
+      UPDATE product
+      SET product_id=${product_id}, product_name=${product_name}, price=${price},
+      description=${description}, product_image=${product_image}, stock_quantity=${stock_quantity}, 
+      seller_id=${seller_id}, category_id=${category_id}, brand_id=${brand_id}
       WHERE id=${id}
       RETURNING *
     `;
@@ -68,7 +70,6 @@ export const updateProduct = async (req, res) => {
         message: "Product not found",
       });
     }
-
     res.status(200).json({ success: true, data: updateProduct[0] });
   } catch (error) {
     console.log("Error in updateProduct function", error);
@@ -81,7 +82,7 @@ export const deleteProduct = async (req, res) => {
 
   try {
     const deletedProduct = await sql`
-      DELETE FROM products WHERE id=${id} RETURNING *
+      DELETE FROM product WHERE id=${id} RETURNING *
     `;
 
     if (deletedProduct.length === 0) {
