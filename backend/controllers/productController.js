@@ -4,9 +4,14 @@ export const getProducts = async (req, res) => {
   try {
     const products = await sql`
       SELECT * FROM product
-      ORDER BY created_at DESC
+      ORDER BY product_id DESC
     `;
     console.log("fetched products", products);
+    
+    if (!products) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+    
     res.status(200).json({ success: true, data: products });
   } catch (error) {
     console.log("Error in getProducts function", error);
@@ -40,8 +45,12 @@ export const getProduct = async (req, res) => {
 
   try {
     const product = await sql`
-     SELECT * FROM products WHERE id=${id}
+     SELECT * FROM product WHERE product_id=${id}
     `;
+
+    if (!product || product.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
 
     res.status(200).json({ success: true, data: product[0] });
   } catch (error) {
@@ -60,7 +69,7 @@ export const updateProduct = async (req, res) => {
       SET product_id=${product_id}, product_name=${product_name}, price=${price},
       description=${description}, product_image=${product_image}, stock_quantity=${stock_quantity}, 
       seller_id=${seller_id}, category_id=${category_id}, brand_id=${brand_id}
-      WHERE id=${id}
+      WHERE product_id=${id}
       RETURNING *
     `;
 
@@ -82,7 +91,7 @@ export const deleteProduct = async (req, res) => {
 
   try {
     const deletedProduct = await sql`
-      DELETE FROM product WHERE id=${id} RETURNING *
+      DELETE FROM product WHERE product_id=${id} RETURNING *
     `;
 
     if (deletedProduct.length === 0) {

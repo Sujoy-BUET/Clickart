@@ -15,7 +15,7 @@ export const getUsers = async (req, res) => {
   }
 };
 
-// Get user by ID
+// Get user by ID [parameterized query]
 export const getUser = async (req, res) => {
   const { id } = req.params;
 
