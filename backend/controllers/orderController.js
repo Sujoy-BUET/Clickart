@@ -4,24 +4,34 @@ import { sql } from "../config/db.js";
 export const getOrders = async (req, res) => {
   try {
     const orders = await sql`
-      SELECT * FROM orders
-      ORDER BY order_id DESC
+      SELECT o.*, da.address_id AS delivery_address_id
+      FROM orders o
+      LEFT JOIN delivery_address da ON o.order_id = da.order_id
+      ORDER BY o.order_id DESC
     `;
-    console.log("fetched orders", orders);
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
-    console.log("Error in getOrders function", error);
+    console.error("Error in getOrders:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-// Get order by ID
+// Get order by ID (with delivery address details)
 export const getOrder = async (req, res) => {
   const { id } = req.params;
 
   try {
     const order = await sql`
-      SELECT * FROM orders WHERE order_id = ${id}
+      SELECT o.*,
+             a.address_id, a.house_no, a.road_no, a.postal_code,
+             pa.area, pa.district, pa.division, pa.country,
+             cp.code AS coupon_code, cp.discount_type, cp.discount_value
+      FROM orders o
+      LEFT JOIN delivery_address da ON o.order_id  = da.order_id
+      LEFT JOIN address a           ON da.address_id = a.address_id
+      LEFT JOIN postalarea pa       ON a.postal_code = pa.postal_code
+      LEFT JOIN coupon cp           ON o.coupon_id   = cp.coupon_id
+      WHERE o.order_id = ${id}
     `;
 
     if (order.length === 0) {
@@ -30,7 +40,7 @@ export const getOrder = async (req, res) => {
 
     res.status(200).json({ success: true, data: order[0] });
   } catch (error) {
-    console.log("Error in getOrder function", error);
+    console.error("Error in getOrder:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -41,35 +51,43 @@ export const getUserOrders = async (req, res) => {
 
   try {
     const orders = await sql`
-      SELECT * FROM orders WHERE user_id = ${userId}
-      ORDER BY order_id DESC
+      SELECT o.*, da.address_id AS delivery_address_id
+      FROM orders o
+      LEFT JOIN delivery_address da ON o.order_id = da.order_id
+      WHERE o.user_id = ${userId}
+      ORDER BY o.order_id DESC
     `;
 
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
-    console.log("Error in getUserOrders function", error);
+    console.error("Error in getUserOrders:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-// Create new order
+// Create new order (with delivery address)
 export const createOrder = async (req, res) => {
-  const { user_id, cart_id, delivery_address_id, total_amount } = req.body;
+  const { user_id, cart_id, coupon_id, total_amount, address_id } = req.body;
 
-  if (!user_id || !cart_id || !delivery_address_id || !total_amount) {
-    return res.status(400).json({ success: false, message: "All fields are required" });
+  if (!user_id || !cart_id || !total_amount || !address_id) {
+    return res.status(400).json({ success: false, message: "user_id, cart_id, total_amount, and address_id are required" });
   }
 
   try {
     const newOrder = await sql`
-      INSERT INTO orders (user_id, cart_id, delivery_address_id, order_status, total_amount)
-      VALUES (${user_id}, ${cart_id}, ${delivery_address_id}, 'PENDING', ${total_amount})
+      INSERT INTO orders (user_id, cart_id, coupon_id, order_status, total_amount)
+      VALUES (${user_id}, ${cart_id}, ${coupon_id ?? null}, 'PENDING', ${total_amount})
       RETURNING *
     `;
 
-    res.status(201).json({ success: true, data: newOrder[0] });
+    await sql`
+      INSERT INTO delivery_address (order_id, address_id)
+      VALUES (${newOrder[0].order_id}, ${address_id})
+    `;
+
+    res.status(201).json({ success: true, data: { ...newOrder[0], delivery_address_id: address_id } });
   } catch (error) {
-    console.log("Error in createOrder function", error);
+    console.error("Error in createOrder:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -80,7 +98,7 @@ export const updateOrderStatus = async (req, res) => {
   const { order_status } = req.body;
 
   if (!order_status) {
-    return res.status(400).json({ success: false, message: "Order status is required" });
+    return res.status(400).json({ success: false, message: "order_status is required" });
   }
 
   const validStatuses = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
@@ -89,20 +107,20 @@ export const updateOrderStatus = async (req, res) => {
   }
 
   try {
-    const updatedOrder = await sql`
+    const updated = await sql`
       UPDATE orders
       SET order_status = ${order_status}
       WHERE order_id = ${id}
       RETURNING *
     `;
 
-    if (updatedOrder.length === 0) {
+    if (updated.length === 0) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    res.status(200).json({ success: true, data: updatedOrder[0] });
+    res.status(200).json({ success: true, data: updated[0] });
   } catch (error) {
-    console.log("Error in updateOrderStatus function", error);
+    console.error("Error in updateOrderStatus:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -112,19 +130,20 @@ export const deleteOrder = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const deletedOrder = await sql`
-      DELETE FROM orders
-      WHERE order_id = ${id}
-      RETURNING *
+    // Remove dependent delivery_address row first
+    await sql`DELETE FROM delivery_address WHERE order_id = ${id}`;
+
+    const deleted = await sql`
+      DELETE FROM orders WHERE order_id = ${id} RETURNING *
     `;
 
-    if (deletedOrder.length === 0) {
+    if (deleted.length === 0) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     res.status(200).json({ success: true, message: "Order deleted successfully" });
   } catch (error) {
-    console.log("Error in deleteOrder function", error);
+    console.error("Error in deleteOrder:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };

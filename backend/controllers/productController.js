@@ -1,108 +1,150 @@
 import { sql } from "../config/db.js";
 
+// Get all products (with brand, category, seller info)
 export const getProducts = async (req, res) => {
   try {
     const products = await sql`
-      SELECT * FROM product
-      ORDER BY product_id DESC
+      SELECT p.*, b.brand_name, c.category_name, s.store_name
+      FROM product p
+      JOIN brand b    ON p.brand_id    = b.brand_id
+      JOIN category c ON p.category_id = c.category_id
+      JOIN sellers s  ON p.seller_id   = s.seller_id
+      ORDER BY p.product_id DESC
     `;
-    console.log("fetched products", products);
-    
-    if (!products) {
-      return res.status(200).json({ success: true, data: [] });
-    }
-    
+
     res.status(200).json({ success: true, data: products });
   } catch (error) {
-    console.log("Error in getProducts function", error);
+    console.error("Error in getProducts:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-export const createProduct = async (req, res) => {
-  const { product_id, product_name, description, price, stock_quantity ,product_image,seller_id,category_id,brand_id} = req.body;
-
-  if (!product_id || !product_name || !price || !stock_quantity || !seller_id || !category_id || !brand_id) {
-    return res.status(400).json({ success: false, message: "All fields are required" });
-  }
-
-  try {
-    const newProduct = await sql`
-      INSERT INTO product(product_id,product_name,description,price,stock_quantity,product_image,seller_id,category_id,brand_id)
-      VALUES (${product_id},${product_name},${description},${price},${stock_quantity},${product_image},${seller_id},${category_id},${brand_id})
-      RETURNING *
-    `;
-
-    res.status(201).json({ success: true, data: newProduct[0] });
-  } catch (error) {
-    console.log("Error in createProduct function", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
-  }
-};
-
+// Get single product (with variations)
 export const getProduct = async (req, res) => {
   const { id } = req.params;
 
   try {
     const product = await sql`
-     SELECT * FROM product WHERE product_id=${id}
+      SELECT p.*, b.brand_name, c.category_name, s.store_name
+      FROM product p
+      JOIN brand b    ON p.brand_id    = b.brand_id
+      JOIN category c ON p.category_id = c.category_id
+      JOIN sellers s  ON p.seller_id   = s.seller_id
+      WHERE p.product_id = ${id}
     `;
 
-    if (!product || product.length === 0) {
+    if (product.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
 
-    res.status(200).json({ success: true, data: product[0] });
+    const variations = await sql`
+      SELECT pv.product_variation_id, pv.price, pv.stock_quantity,
+             vt.variation_type_name, v.variation_value
+      FROM product_variation pv
+      JOIN variation v      ON pv.variation_id      = v.variation_id
+      JOIN variationtype vt ON v.variation_type_id   = vt.variation_type_id
+      WHERE pv.product_id = ${id}
+    `;
+
+    res.status(200).json({ success: true, data: { ...product[0], variations } });
   } catch (error) {
-    console.log("Error in getProduct function", error);
+    console.error("Error in getProduct:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-export const updateProduct = async (req, res) => {
-  const { id } = req.params;
-  const {product_id, product_name, description, price, stock_quantity ,product_image,seller_id,category_id,brand_id } = req.body;
+// Create product
+export const createProduct = async (req, res) => {
+  const { product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id } = req.body;
+
+  if (!product_name || !price || !stock_quantity || !seller_id || !category_id || !brand_id) {
+    return res.status(400).json({ success: false, message: "product_name, price, stock_quantity, seller_id, category_id, and brand_id are required" });
+  }
 
   try {
-    const updateProduct = await sql`
-      UPDATE product
-      SET product_id=${product_id}, product_name=${product_name}, price=${price},
-      description=${description}, product_image=${product_image}, stock_quantity=${stock_quantity}, 
-      seller_id=${seller_id}, category_id=${category_id}, brand_id=${brand_id}
-      WHERE product_id=${id}
+    const newProduct = await sql`
+      INSERT INTO product (product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
+      VALUES (${product_name}, ${description ?? null}, ${price}, ${stock_quantity}, ${product_image ?? null}, ${seller_id}, ${category_id}, ${brand_id})
       RETURNING *
     `;
 
-    if (updateProduct.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-    res.status(200).json({ success: true, data: updateProduct[0] });
+    res.status(201).json({ success: true, data: newProduct[0] });
   } catch (error) {
-    console.log("Error in updateProduct function", error);
+    console.error("Error in createProduct:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
+// Update product
+export const updateProduct = async (req, res) => {
+  const { id } = req.params;
+  const { product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id } = req.body;
+
+  try {
+    const updated = await sql`
+      UPDATE product
+      SET product_name   = COALESCE(${product_name ?? null}, product_name),
+          description    = COALESCE(${description ?? null}, description),
+          price          = COALESCE(${price ?? null}, price),
+          stock_quantity = COALESCE(${stock_quantity ?? null}, stock_quantity),
+          product_image  = COALESCE(${product_image ?? null}, product_image),
+          seller_id      = COALESCE(${seller_id ?? null}, seller_id),
+          category_id    = COALESCE(${category_id ?? null}, category_id),
+          brand_id       = COALESCE(${brand_id ?? null}, brand_id)
+      WHERE product_id = ${id}
+      RETURNING *
+    `;
+
+    if (updated.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    res.status(200).json({ success: true, data: updated[0] });
+  } catch (error) {
+    console.error("Error in updateProduct:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// Delete product
 export const deleteProduct = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const deletedProduct = await sql`
-      DELETE FROM product WHERE product_id=${id} RETURNING *
+    const deleted = await sql`
+      DELETE FROM product WHERE product_id = ${id} RETURNING *
     `;
 
-    if (deletedProduct.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
+    if (deleted.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
-    res.status(200).json({ success: true, data: deletedProduct[0] });
+
+    res.status(200).json({ success: true, data: deleted[0] });
   } catch (error) {
-    console.log("Error in deleteProduct function", error);
+    console.error("Error in deleteProduct:", error);
+    res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// Add variation to product
+export const addProductVariation = async (req, res) => {
+  const { id } = req.params;
+  const { variation_id, price, stock_quantity } = req.body;
+
+  if (!variation_id) {
+    return res.status(400).json({ success: false, message: "variation_id is required" });
+  }
+
+  try {
+    const pv = await sql`
+      INSERT INTO product_variation (product_id, variation_id, price, stock_quantity)
+      VALUES (${id}, ${variation_id}, ${price ?? null}, ${stock_quantity ?? null})
+      RETURNING *
+    `;
+
+    res.status(201).json({ success: true, data: pv[0] });
+  } catch (error) {
+    console.error("Error in addProductVariation:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };

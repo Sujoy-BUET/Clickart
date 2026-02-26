@@ -4,27 +4,33 @@ import { sql } from "../config/db.js";
 export const getCarts = async (req, res) => {
   try {
     const carts = await sql`
-      SELECT * FROM cart
-      ORDER BY cart_id DESC
+      SELECT * FROM cart ORDER BY cart_id DESC
     `;
-    console.log("fetched carts", carts);
     res.status(200).json({ success: true, data: carts });
   } catch (error) {
-    console.log("Error in getCarts function", error);
+    console.error("Error in getCarts:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-// Get cart by ID
+// Get cart by ID (with product-variation details)
 export const getCart = async (req, res) => {
   const { id } = req.params;
 
   try {
     const cart = await sql`
-      SELECT c.cart_id, c.user_id, p.product_id, p.product_name, ct.quantity, p.price
+      SELECT c.cart_id, c.user_id,
+             ct.product_variation_id, ct.quantity,
+             pv.price   AS variation_price,
+             pv.stock_quantity AS variation_stock,
+             p.product_id, p.product_name, p.product_image,
+             vt.variation_type_name, v.variation_value
       FROM cart c
-      LEFT JOIN contains ct ON c.cart_id = ct.cart_id
-      LEFT JOIN product p ON ct.product_id = p.product_id
+      LEFT JOIN contains ct        ON c.cart_id                = ct.cart_id
+      LEFT JOIN product_variation pv ON ct.product_variation_id = pv.product_variation_id
+      LEFT JOIN product p          ON pv.product_id            = p.product_id
+      LEFT JOIN variation v        ON pv.variation_id           = v.variation_id
+      LEFT JOIN variationtype vt   ON v.variation_type_id       = vt.variation_type_id
       WHERE c.cart_id = ${id}
     `;
 
@@ -34,79 +40,79 @@ export const getCart = async (req, res) => {
 
     res.status(200).json({ success: true, data: cart });
   } catch (error) {
-    console.log("Error in getCart function", error);
+    console.error("Error in getCart:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
 // Create new cart
 export const createCart = async (req, res) => {
-  const { cart_id, user_id } = req.body;
+  const { user_id } = req.body;
 
-  if (!cart_id || !user_id) {
-    return res.status(400).json({ success: false, message: "Cart ID and User ID are required" });
+  if (!user_id) {
+    return res.status(400).json({ success: false, message: "user_id is required" });
   }
 
   try {
     const newCart = await sql`
-      INSERT INTO cart (cart_id, user_id)
-      VALUES (${cart_id}, ${user_id})
+      INSERT INTO cart (user_id)
+      VALUES (${user_id})
       RETURNING *
     `;
 
     res.status(201).json({ success: true, data: newCart[0] });
   } catch (error) {
-    console.log("Error in createCart function", error);
+    console.error("Error in createCart:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-// Add product to cart
+// Add product variation to cart
 export const addToCart = async (req, res) => {
-  const { cart_id, product_id, quantity } = req.body;
+  const { cart_id, product_variation_id, quantity } = req.body;
 
-  if (!cart_id || !product_id || !quantity) {
-    return res.status(400).json({ success: false, message: "All fields are required" });
+  if (!cart_id || !product_variation_id || !quantity) {
+    return res.status(400).json({ success: false, message: "cart_id, product_variation_id, and quantity are required" });
   }
 
   try {
     const cartItem = await sql`
-      INSERT INTO contains (cart_id, product_id, quantity)
-      VALUES (${cart_id}, ${product_id}, ${quantity})
-      ON CONFLICT (cart_id, product_id) 
+      INSERT INTO contains (cart_id, product_variation_id, quantity)
+      VALUES (${cart_id}, ${product_variation_id}, ${quantity})
+      ON CONFLICT (cart_id, product_variation_id)
       DO UPDATE SET quantity = contains.quantity + ${quantity}
       RETURNING *
     `;
 
     res.status(201).json({ success: true, data: cartItem[0] });
   } catch (error) {
-    console.log("Error in addToCart function", error);
+    console.error("Error in addToCart:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 
-// Remove product from cart
+// Remove product variation from cart
 export const removeFromCart = async (req, res) => {
-  const { cart_id, product_id } = req.body;
+  const { cart_id, product_variation_id } = req.body;
 
-  if (!cart_id || !product_id) {
-    return res.status(400).json({ success: false, message: "Cart ID and Product ID are required" });
+  if (!cart_id || !product_variation_id) {
+    return res.status(400).json({ success: false, message: "cart_id and product_variation_id are required" });
   }
 
   try {
-    const deletedItem = await sql`
+    const deleted = await sql`
       DELETE FROM contains
-      WHERE cart_id = ${cart_id} AND product_id = ${product_id}
+      WHERE cart_id = ${cart_id} AND product_variation_id = ${product_variation_id}
       RETURNING *
     `;
 
-    if (deletedItem.length === 0) {
+    if (deleted.length === 0) {
       return res.status(404).json({ success: false, message: "Item not found in cart" });
     }
 
     res.status(200).json({ success: true, message: "Item removed from cart" });
   } catch (error) {
-    console.log("Error in removeFromCart function", error);
+    console.error("Error in removeFromCart:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -116,19 +122,17 @@ export const deleteCart = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const deletedCart = await sql`
-      DELETE FROM cart
-      WHERE cart_id = ${id}
-      RETURNING *
+    const deleted = await sql`
+      DELETE FROM cart WHERE cart_id = ${id} RETURNING *
     `;
 
-    if (deletedCart.length === 0) {
+    if (deleted.length === 0) {
       return res.status(404).json({ success: false, message: "Cart not found" });
     }
 
     res.status(200).json({ success: true, message: "Cart deleted successfully" });
   } catch (error) {
-    console.log("Error in deleteCart function", error);
+    console.error("Error in deleteCart:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };

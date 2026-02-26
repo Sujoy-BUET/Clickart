@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 
 import productRoutes from "./routes/productRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import sellerRoutes from "./routes/sellerRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
@@ -61,6 +62,7 @@ app.use(morgan("dev")); // log the requests
  
 app.use("/api/products", productRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/sellers", sellerRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);

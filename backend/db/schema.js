@@ -5,19 +5,24 @@ export async function createSchema(sql) {
     const fileUrl = new URL("./schema.sql", import.meta.url);
     const sqlText = await fs.readFile(fileUrl, "utf8");
 
-    // Split statements on semicolons. Keep simple: ignore empty statements.
-    const statements = sqlText.split(";").map(s => s.trim()).filter(Boolean);
+    // Split statements on semicolons, filter out empty/comment-only entries.
+    const statements = sqlText
+      .split(";")
+      .map((s) =>
+        s
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))  // strip comment lines
+          .join("\n")
+          .trim()
+      )
+      .filter((s) => s.length > 0);
 
     for (const stmt of statements) {
-      if (typeof sql.unsafe === "function") {
-        await sql.unsafe(stmt);
-      } else if (typeof sql === "function") {
-        // Some clients expose a direct call; try it as a fallback.
-        await sql(stmt);
-      } else {
-        throw new Error("SQL client does not support executing raw statements. Update schema.js accordingly.");
-      }
+      // neon serverless driver exposes sql.query() for conventional (non-tagged-template) calls
+      await sql.query(stmt);
     }
+
+    console.log("Schema created / refreshed successfully");
   } catch (error) {
     console.error("Error creating tables from schema.sql", error);
     throw error;
