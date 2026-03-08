@@ -1,19 +1,47 @@
 /**
- * Seed the database with realistic dummy data.
- * Every INSERT uses parameterized values via the neon tagged-template syntax.
+ * Seed the database with dummy data.
  */
 export async function seedData(sql) {
   try {
-    /* ---------- Users ---------- */
+    /* Users */
     const users = [
-      { id: 1, name: "john_doe",    pw: "hashed_pw_john123" },
-      { id: 2, name: "jane_smith",  pw: "hashed_pw_jane456" },
-      { id: 3, name: "mike_chen",   pw: "hashed_pw_mike789" },
+      { id: 1, name: "john_doe",    pw: "password123" },
+      { id: 2, name: "jane_smith",  pw: "password456" },
+      { id: 3, name: "mike_chen",   pw: "password789" },
     ];
     for (const u of users) {
       await sql`
-        INSERT INTO users (user_id, user_name, password)
+        INSERT INTO Users (user_id, user_name, password)
         VALUES (${u.id}, ${u.name}, ${u.pw})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    /* User Emails */
+    const userEmails = [
+      { uid: 1, email: "john.doe@email.com" },
+      { uid: 1, email: "john.doe.personal@gmail.com" },
+      { uid: 2, email: "jane.smith@email.com" },
+      { uid: 3, email: "mike.chen@email.com" },
+    ];
+    for (const e of userEmails) {
+      await sql`
+        INSERT INTO User_Email (user_id, email)
+        VALUES (${e.uid}, ${e.email})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    /* ---------- User Phones ---------- */
+    const userPhones = [
+      { uid: 1, phone: "01711111001" },
+      { uid: 2, phone: "01711111002" }, 
+      { uid: 3, phone: "01711111003" },
+    ];
+    for (const p of userPhones) {
+      await sql`
+        INSERT INTO User_Phone (user_id, phone_number)
+        VALUES (${p.uid}, ${p.phone})
         ON CONFLICT DO NOTHING
       `;
     }
@@ -25,7 +53,7 @@ export async function seedData(sql) {
     ];
     for (const s of sellers) {
       await sql`
-        INSERT INTO sellers (seller_id, seller_name, seller_password, store_name, store_description, seller_since, is_verified)
+        INSERT INTO Sellers (seller_id, seller_name, seller_password, store_name, store_description, seller_since, is_verified)
         VALUES (${s.id}, ${s.name}, ${s.pw}, ${s.store}, ${s.desc}, ${s.since}, ${s.verified})
         ON CONFLICT DO NOTHING
       `;
@@ -39,7 +67,7 @@ export async function seedData(sql) {
     ];
     for (const e of sellerEmails) {
       await sql`
-        INSERT INTO seller_email (seller_id, email)
+        INSERT INTO Seller_Email (seller_id, email)
         VALUES (${e.sid}, ${e.email})
         ON CONFLICT DO NOTHING
       `;
@@ -52,37 +80,23 @@ export async function seedData(sql) {
     ];
     for (const p of sellerPhones) {
       await sql`
-        INSERT INTO seller_phone (seller_id, phone_number)
+        INSERT INTO Seller_Phone (seller_id, phone_number)
         VALUES (${p.sid}, ${p.phone})
-        ON CONFLICT DO NOTHING
-      `;
-    }
-
-    /* ---------- Postal Areas ---------- */
-    const postalAreas = [
-      { code: "1216", area: "Mirpur",   district: "Dhaka",      division: "Dhaka",       country: "Bangladesh" },
-      { code: "1212", area: "Gulshan",  district: "Dhaka",      division: "Dhaka",       country: "Bangladesh" },
-      { code: "4000", area: "Kotwali",  district: "Chittagong", division: "Chittagong",  country: "Bangladesh" },
-    ];
-    for (const pa of postalAreas) {
-      await sql`
-        INSERT INTO postalarea (postal_code, area, district, division, country)
-        VALUES (${pa.code}, ${pa.area}, ${pa.district}, ${pa.division}, ${pa.country})
         ON CONFLICT DO NOTHING
       `;
     }
 
     /* ---------- Addresses ---------- */
     const addresses = [
-      { id: 1, house: "12/A",  road: "Road 5",  postal: "1216" },
-      { id: 2, house: "45",    road: "Road 11", postal: "1212" },
-      { id: 3, house: "78/B",  road: "Road 3",  postal: "4000" },
-      { id: 4, house: "99",    road: "Road 8",  postal: "1216" },
+      { id: 1, house: "12/A",  road: "Road 5",  postal: "1216", area: "Mirpur",   district: "Dhaka",      division: "Dhaka",       country: "Bangladesh" },
+      { id: 2, house: "45",    road: "Road 11", postal: "1212", area: "Gulshan",  district: "Dhaka",      division: "Dhaka",       country: "Bangladesh" },
+      { id: 3, house: "78/B",  road: "Road 3",  postal: "4000", area: "Kotwali",  district: "Chittagong", division: "Chittagong",  country: "Bangladesh" },
+      { id: 4, house: "99",    road: "Road 8",  postal: "1216", area: "Mirpur",   district: "Dhaka",      division: "Dhaka",       country: "Bangladesh" },
     ];
     for (const a of addresses) {
       await sql`
-        INSERT INTO address (address_id, house_no, road_no, postal_code)
-        VALUES (${a.id}, ${a.house}, ${a.road}, ${a.postal})
+        INSERT INTO Address (address_id, house_no, road_no, postal_code, area, district, division, country)
+        VALUES (${a.id}, ${a.house}, ${a.road}, ${a.postal}, ${a.area}, ${a.district}, ${a.division}, ${a.country})
         ON CONFLICT DO NOTHING
       `;
     }
@@ -95,7 +109,7 @@ export async function seedData(sql) {
     ];
     for (const ua of userAddresses) {
       await sql`
-        INSERT INTO user_address (user_id, address_id)
+        INSERT INTO User_Address (user_id, address_id)
         VALUES (${ua.uid}, ${ua.aid})
         ON CONFLICT DO NOTHING
       `;
@@ -108,7 +122,7 @@ export async function seedData(sql) {
     ];
     for (const sa of sellerAddresses) {
       await sql`
-        INSERT INTO seller_address (seller_id, address_id)
+        INSERT INTO Seller_Address (seller_id, address_id)
         VALUES (${sa.sid}, ${sa.aid})
         ON CONFLICT DO NOTHING
       `;
@@ -123,7 +137,7 @@ export async function seedData(sql) {
     ];
     for (const b of brands) {
       await sql`
-        INSERT INTO brand (brand_id, brand_name)
+        INSERT INTO Brand (brand_id, brand_name)
         VALUES (${b.id}, ${b.name})
         ON CONFLICT DO NOTHING
       `;
@@ -138,7 +152,7 @@ export async function seedData(sql) {
     ];
     for (const c of categories) {
       await sql`
-        INSERT INTO category (category_id, category_name)
+        INSERT INTO Category (category_id, category_name)
         VALUES (${c.id}, ${c.name})
         ON CONFLICT DO NOTHING
       `;
@@ -153,7 +167,7 @@ export async function seedData(sql) {
     ];
     for (const p of products) {
       await sql`
-        INSERT INTO product (product_id, product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
+        INSERT INTO Product (product_id, product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
         VALUES (${p.id}, ${p.name}, ${p.desc}, ${p.price}, ${p.qty}, ${p.img}, ${p.sid}, ${p.cid}, ${p.bid})
         ON CONFLICT DO NOTHING
       `;
@@ -173,7 +187,7 @@ export async function seedData(sql) {
     ];
     for (const v of variations) {
       await sql`
-        INSERT INTO variation (variation_id, variation_type_id, variation_value)
+        INSERT INTO Variation (variation_id, variation_type_id, variation_value)
         VALUES (${v.id}, ${v.typeId}, ${v.value})
         ON CONFLICT DO NOTHING
       `;
@@ -196,7 +210,7 @@ export async function seedData(sql) {
     ];
     for (const pv of productVariations) {
       await sql`
-        INSERT INTO product_variation (product_variation_id, product_id, variation_id, price, stock_quantity)
+        INSERT INTO Product_Variation (product_variation_id, product_id, variation_id, price, stock_quantity)
         VALUES (${pv.id}, ${pv.pid}, ${pv.vid}, ${pv.price}, ${pv.qty})
         ON CONFLICT DO NOTHING
       `;
@@ -210,7 +224,7 @@ export async function seedData(sql) {
     ];
     for (const c of carts) {
       await sql`
-        INSERT INTO cart (cart_id, user_id)
+        INSERT INTO Cart (cart_id, user_id)
         VALUES (${c.id}, ${c.uid})
         ON CONFLICT DO NOTHING
       `;
@@ -225,7 +239,7 @@ export async function seedData(sql) {
     ];
     for (const ci of cartItems) {
       await sql`
-        INSERT INTO contains (cart_id, product_variation_id, quantity)
+        INSERT INTO Contains (cart_id, product_variation_id, quantity)
         VALUES (${ci.cartId}, ${ci.pvId}, ${ci.qty})
         ON CONFLICT DO NOTHING
       `;
@@ -238,7 +252,7 @@ export async function seedData(sql) {
     ];
     for (const cp of coupons) {
       await sql`
-        INSERT INTO coupon (coupon_id, code, description, discount_type, discount_value, max_discount_amount, min_order_amount, start_date, end_date, is_active)
+        INSERT INTO Coupon (coupon_id, code, description, discount_type, discount_value, max_discount_amount, min_order_amount, start_date, end_date, is_active)
         VALUES (${cp.id}, ${cp.code}, ${cp.desc}, ${cp.type}, ${cp.val}, ${cp.maxDisc}, ${cp.minOrder}, ${cp.start}, ${cp.end}, ${cp.active})
         ON CONFLICT DO NOTHING
       `;
@@ -252,7 +266,7 @@ export async function seedData(sql) {
     ];
     for (const o of orders) {
       await sql`
-        INSERT INTO orders (order_id, user_id, cart_id, coupon_id, order_status, total_amount)
+        INSERT INTO Orders (order_id, user_id, cart_id, coupon_id, order_status, total_amount)
         VALUES (${o.id}, ${o.uid}, ${o.cartId}, ${o.couponId}, ${o.status}, ${o.total})
         ON CONFLICT DO NOTHING
       `;
@@ -266,7 +280,7 @@ export async function seedData(sql) {
     ];
     for (const da of deliveryAddrs) {
       await sql`
-        INSERT INTO delivery_address (order_id, address_id)
+        INSERT INTO Delivery_Address (order_id, address_id)
         VALUES (${da.orderId}, ${da.addrId})
         ON CONFLICT DO NOTHING
       `;
@@ -280,7 +294,7 @@ export async function seedData(sql) {
     ];
     for (const pm of payments) {
       await sql`
-        INSERT INTO payment (payment_id, order_id, payment_method, payment_status)
+        INSERT INTO Payment (payment_id, order_id, payment_method, payment_status)
         VALUES (${pm.id}, ${pm.orderId}, ${pm.method}, ${pm.status})
         ON CONFLICT DO NOTHING
       `;
@@ -295,7 +309,7 @@ export async function seedData(sql) {
     ];
     for (const r of reviews) {
       await sql`
-        INSERT INTO review (review_id, reviewer_user_id, rating, comment)
+        INSERT INTO Review (review_id, reviewer_user_id, rating, comment)
         VALUES (${r.id}, ${r.uid}, ${r.rating}, ${r.comment})
         ON CONFLICT DO NOTHING
       `;
@@ -309,7 +323,7 @@ export async function seedData(sql) {
     ];
     for (const rp of reviewProducts) {
       await sql`
-        INSERT INTO review_product (review_id, product_id)
+        INSERT INTO Review_Product (review_id, product_id)
         VALUES (${rp.rid}, ${rp.pid})
         ON CONFLICT DO NOTHING
       `;
@@ -321,7 +335,7 @@ export async function seedData(sql) {
     ];
     for (const rs of reviewSellers) {
       await sql`
-        INSERT INTO review_seller (review_id, seller_id)
+        INSERT INTO Review_Seller (review_id, seller_id)
         VALUES (${rs.rid}, ${rs.sid})
         ON CONFLICT DO NOTHING
       `;

@@ -1,37 +1,74 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
 import { getSeller, getSellerReviews, getProducts } from '../api';
+import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 export default function SellerDashboardPage() {
   const { sellerId } = useParams();
+  const navigate = useNavigate();
+  const { user, isSeller, isAuthenticated } = useAuth();
   const [seller, setSeller] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('products');
 
+  // Determine which seller to show
+  const targetSellerId = sellerId || (isSeller() ? user?.seller_id : null);
+
   useEffect(() => {
+    // Redirect if not authenticated and accessing /seller/dashboard
+    if (!sellerId && !isAuthenticated()) {
+      navigate('/seller/login');
+      return;
+    }
+    
+    // Redirect if not a seller and accessing /seller/dashboard
+    if (!sellerId && !isSeller()) {
+      navigate('/login');
+      return;
+    }
+
+    if (!targetSellerId) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     Promise.all([
-      getSeller(sellerId),
-      getSellerReviews(sellerId).catch(() => []),
+      getSeller(targetSellerId),
+      getSellerReviews(targetSellerId).catch(() => []),
       getProducts().catch(() => []),
     ])
       .then(([s, r, p]) => {
-        setSeller(s);
+        setSeller(s.data || s);
         setReviews(Array.isArray(r) ? r : []);
         const all = Array.isArray(p) ? p : [];
-        setProducts(all.filter((x) => x.seller_id === Number(sellerId)));
+        setProducts(all.filter((x) => x.seller_id === Number(targetSellerId)));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [sellerId]);
+  }, [targetSellerId, sellerId, isAuthenticated, isSeller, navigate]);
 
   if (loading) return <LoadingSpinner />;
-  if (!seller) return <div className="py-24 text-center text-gray-500">Seller not found.</div>;
+  
+  if (!seller) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-96 space-y-4">
+        <Store className="w-12 h-12 text-gray-400" />
+        <h2 className="text-xl font-semibold text-gray-600">Seller not found</h2>
+        <p className="text-gray-500">The seller you're looking for doesn't exist.</p>
+        <Link to="/sellers" className="text-emerald-600 hover:underline">
+          Browse all sellers
+        </Link>
+      </div>
+    );
+  }
+
+  const isOwnDashboard = !sellerId && isSeller() && targetSellerId === user?.seller_id;
 
   const tabs = [
     { key: 'products', label: 'Products', count: products.length },
@@ -83,8 +120,28 @@ export default function SellerDashboardPage() {
       {/* Products tab */}
       {tab === 'products' && (
         <div>
+          {/* Add Product Button - only show on own dashboard */}
+          {isOwnDashboard && (
+            <div className="mb-6">
+              <button className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition">
+                <Plus className="w-4 h-4" />
+                Add Product
+              </button>
+            </div>
+          )}
+          
           {products.length === 0 ? (
-            <p className="text-center text-sm text-gray-600 py-10">No products listed yet.</p>
+            <div className="text-center py-10">
+              <Package className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-gray-500">
+                {isOwnDashboard ? "You haven't listed any products yet." : "No products listed yet."}
+              </p>
+              {isOwnDashboard && (
+                <button className="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition">
+                  List Your First Product
+                </button>
+              )}
+            </div>
           ) : (
             <div className="space-y-3">
               {products.map((p) => (
@@ -101,7 +158,19 @@ export default function SellerDashboardPage() {
                     </Link>
                     <p className="text-xs text-gray-500">{p.brand_name} · {p.category_name}</p>
                   </div>
-                  <span className="text-sm font-bold text-violet-400">₹{Number(p.price).toLocaleString('en-IN')}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-violet-400">₹{Number(p.price).toLocaleString('en-IN')}</span>
+                    {isOwnDashboard && (
+                      <div className="flex gap-1">
+                        <button className="p-1 text-gray-400 hover:text-blue-400 transition">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button className="p-1 text-gray-400 hover:text-red-400 transition">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -1,20 +1,36 @@
-import { Link, useLocation } from 'react-router-dom';
-import { ShoppingCart, Search, User, Store, Home, Package, Menu, X } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ShoppingCart, User, Store, Home, Package, Menu, X, LogOut } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Navbar() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { user, logout, isAuthenticated, isSeller } = useAuth();
   const [open, setOpen] = useState(false);
 
-  const links = [
+  const links = isSeller() ? [
+    { to: '/',         label: 'Home',      icon: Home },
+    { to: '/products', label: 'Products',  icon: Package },
+    { to: '/seller/dashboard', label: 'Dashboard', icon: Store },
+    { to: '/sellers',  label: 'Sellers',   icon: Store },
+    { to: '/seller/profile',   label: 'Profile',   icon: User },
+  ] : [
     { to: '/',         label: 'Home',     icon: Home },
     { to: '/products', label: 'Products', icon: Package },
-    { to: '/cart/1',   label: 'Cart',     icon: ShoppingCart },
-    { to: '/orders/user/1', label: 'Orders', icon: Package },
+    { to: `/cart/${user?.user_id || 1}`,   label: 'Cart',     icon: ShoppingCart },
+    { to: `/orders/user/${user?.user_id || 1}`, label: 'Orders', icon: Package },
     { to: '/sellers',  label: 'Sellers',  icon: Store },
+    { to: '/profile',  label: 'Profile',  icon: User },
   ];
 
   const isActive = (to) => pathname === to;
+
+  const handleLogout = () => {
+    logout();
+    setOpen(false);
+    navigate('/');
+  };
 
   return (
     <nav className="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/80 backdrop-blur-xl">
@@ -24,18 +40,6 @@ export default function Navbar() {
           <span className="rounded-lg bg-violet-600 px-2 py-0.5 text-white">Clic</span>
           <span className="text-gray-100">Kart</span>
         </Link>
-
-        {/* Search bar (desktop) */}
-        <div className="hidden md:flex mx-4 flex-1 max-w-md">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-            <input
-              type="text"
-              placeholder="Search products..."
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 py-2 pl-10 pr-4 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
-            />
-          </div>
-        </div>
 
         {/* Desktop nav */}
         <div className="hidden md:flex items-center gap-1">
@@ -50,13 +54,28 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
-          <Link
-            to="/login"
-            className="ml-2 flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition"
-          >
-            <User className="h-4 w-4" />
-            Login
-          </Link>
+          {isAuthenticated() ? (
+            <div className="ml-2 flex items-center gap-2">
+              <span className="text-sm text-gray-300">
+                Hi, {isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 transition"
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </button>
+            </div>
+          ) : (
+            <Link
+              to="/login"
+              className="ml-2 flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition"
+            >
+              <User className="h-4 w-4" />
+              Login
+            </Link>
+          )}
         </div>
 
         {/* Mobile hamburger */}
@@ -68,14 +87,6 @@ export default function Navbar() {
       {/* Mobile menu */}
       {open && (
         <div className="md:hidden border-t border-gray-800 bg-gray-950 px-4 pb-4 pt-2">
-          <div className="relative mb-3">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-            <input
-              type="text"
-              placeholder="Search products..."
-              className="w-full rounded-lg border border-gray-700 bg-gray-900 py-2 pl-10 pr-4 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500"
-            />
-          </div>
           {links.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
@@ -88,14 +99,29 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
-          <Link
-            to="/login"
-            onClick={() => setOpen(false)}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-500 transition"
-          >
-            <User className="h-4 w-4" />
-            Login
-          </Link>
+          {isAuthenticated() ? (
+            <div className="mt-2 space-y-2">
+              <div className="px-3 py-2 text-sm text-gray-300">
+                Hi, {isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-red-500 transition"
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </button>
+            </div>
+          ) : (
+            <Link
+              to="/login"
+              onClick={() => setOpen(false)}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-500 transition"
+            >
+              <User className="h-4 w-4" />
+              Login
+            </Link>
+          )}
         </div>
       )}
     </nav>

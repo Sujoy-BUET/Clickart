@@ -4,7 +4,7 @@ import { sql } from "../config/db.js";
 export const getCarts = async (req, res) => {
   try {
     const carts = await sql`
-      SELECT * FROM cart ORDER BY cart_id DESC
+      SELECT * FROM Cart ORDER BY cart_id DESC
     `;
     res.status(200).json({ success: true, data: carts });
   } catch (error) {
@@ -25,12 +25,12 @@ export const getCart = async (req, res) => {
              pv.stock_quantity AS variation_stock,
              p.product_id, p.product_name, p.product_image,
              vt.variation_type_name, v.variation_value
-      FROM cart c
-      LEFT JOIN contains ct        ON c.cart_id                = ct.cart_id
-      LEFT JOIN product_variation pv ON ct.product_variation_id = pv.product_variation_id
-      LEFT JOIN product p          ON pv.product_id            = p.product_id
-      LEFT JOIN variation v        ON pv.variation_id           = v.variation_id
-      LEFT JOIN variationtype vt   ON v.variation_type_id       = vt.variation_type_id
+      FROM Cart c
+      LEFT JOIN Contains ct        ON c.cart_id                = ct.cart_id
+      LEFT JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
+      LEFT JOIN Product p          ON pv.product_id            = p.product_id
+      LEFT JOIN Variation v        ON pv.variation_id           = v.variation_id
+      LEFT JOIN VariationType vt   ON v.variation_type_id       = vt.variation_type_id
       WHERE c.cart_id = ${id}
     `;
 
@@ -55,7 +55,7 @@ export const createCart = async (req, res) => {
 
   try {
     const newCart = await sql`
-      INSERT INTO cart (user_id)
+      INSERT INTO Cart (user_id)
       VALUES (${user_id})
       RETURNING *
     `;
@@ -77,10 +77,10 @@ export const addToCart = async (req, res) => {
 
   try {
     const cartItem = await sql`
-      INSERT INTO contains (cart_id, product_variation_id, quantity)
+      INSERT INTO Contains (cart_id, product_variation_id, quantity)
       VALUES (${cart_id}, ${product_variation_id}, ${quantity})
       ON CONFLICT (cart_id, product_variation_id)
-      DO UPDATE SET quantity = contains.quantity + ${quantity}
+      DO UPDATE SET quantity = Contains.quantity + ${quantity}
       RETURNING *
     `;
 
@@ -101,7 +101,7 @@ export const removeFromCart = async (req, res) => {
 
   try {
     const deleted = await sql`
-      DELETE FROM contains
+      DELETE FROM Contains
       WHERE cart_id = ${cart_id} AND product_variation_id = ${product_variation_id}
       RETURNING *
     `;
@@ -123,7 +123,7 @@ export const deleteCart = async (req, res) => {
 
   try {
     const deleted = await sql`
-      DELETE FROM cart WHERE cart_id = ${id} RETURNING *
+      DELETE FROM Cart WHERE cart_id = ${id} RETURNING *
     `;
 
     if (deleted.length === 0) {

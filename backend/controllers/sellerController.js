@@ -1,12 +1,51 @@
 import { sql } from "../config/db.js";
 
+// Seller Authentication  
+export const authenticateSeller = async (req, res) => {
+  const { seller_name, seller_password } = req.body;
+
+  try {
+    const seller = await sql`
+      SELECT seller_id, seller_name, seller_password, store_name, store_description, is_verified 
+      FROM Sellers WHERE seller_name = ${seller_name}
+    `;
+
+    if (seller.length === 0 || seller[0].seller_password !== seller_password) {
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+
+    // Get seller's emails and phones
+    const emails = await sql`
+      SELECT email FROM Seller_Email WHERE seller_id = ${seller[0].seller_id}
+    `;
+    
+    const phones = await sql`
+      SELECT phone_number FROM Seller_Phone WHERE seller_id = ${seller[0].seller_id}
+    `;
+
+    const sellerData = {
+      seller_id: seller[0].seller_id,
+      seller_name: seller[0].seller_name,
+      store_name: seller[0].store_name,
+      store_description: seller[0].store_description,
+      is_verified: seller[0].is_verified,
+      emails: emails.map(e => e.email),
+      phones: phones.map(p => p.phone_number)
+    };
+
+    res.status(200).json({ success: true, data: sellerData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
 // Get all sellers
 export const getSellers = async (req, res) => {
   try {
     const sellers = await sql`
       SELECT seller_id, seller_name, store_name, store_description,
-             seller_since, is_verified
-      FROM sellers
+             seller_since, is_verified,seller_password
+      FROM Sellers
       ORDER BY seller_id DESC
     `;
     res.status(200).json({ success: true, data: sellers });
@@ -24,7 +63,7 @@ export const getSeller = async (req, res) => {
     const seller = await sql`
       SELECT seller_id, seller_name, store_name, store_description,
              seller_since, is_verified
-      FROM sellers WHERE seller_id = ${id}
+      FROM Sellers WHERE seller_id = ${id}
     `;
 
     if (seller.length === 0) {
@@ -32,19 +71,18 @@ export const getSeller = async (req, res) => {
     }
 
     const emails = await sql`
-      SELECT email FROM seller_email WHERE seller_id = ${id}
+      SELECT email FROM Seller_Email WHERE seller_id = ${id}
     `;
 
     const phones = await sql`
-      SELECT phone_number FROM seller_phone WHERE seller_id = ${id}
+      SELECT phone_number FROM Seller_Phone WHERE seller_id = ${id}
     `;
 
     const addresses = await sql`
       SELECT a.address_id, a.house_no, a.road_no, a.postal_code,
-             pa.area, pa.district, pa.division, pa.country
-      FROM seller_address sa
-      JOIN address a ON sa.address_id = a.address_id
-      LEFT JOIN postalarea pa ON a.postal_code = pa.postal_code
+             a.area, a.district, a.division, a.country
+      FROM Seller_Address sa
+      JOIN Address a ON sa.address_id = a.address_id
       WHERE sa.seller_id = ${id}
     `;
 
@@ -67,21 +105,16 @@ export const getSeller = async (req, res) => {
 export const createSeller = async (req, res) => {
   const { seller_name, seller_password, store_name, store_description } = req.body;
 
-  if (!seller_name || !seller_password || !store_name) {
-    return res.status(400).json({ success: false, message: "seller_name, seller_password, and store_name are required" });
-  }
-
   try {
     const newSeller = await sql`
-      INSERT INTO sellers (seller_name, seller_password, store_name, store_description)
+      INSERT INTO Sellers (seller_name, seller_password, store_name, store_description)
       VALUES (${seller_name}, ${seller_password}, ${store_name}, ${store_description ?? null})
       RETURNING seller_id, seller_name, store_name, seller_since, is_verified
     `;
 
     res.status(201).json({ success: true, data: newSeller[0] });
   } catch (error) {
-    console.error("Error in createSeller:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -92,7 +125,7 @@ export const updateSeller = async (req, res) => {
 
   try {
     const updated = await sql`
-      UPDATE sellers
+      UPDATE Sellers
       SET seller_name      = COALESCE(${seller_name ?? null}, seller_name),
           seller_password   = COALESCE(${seller_password ?? null}, seller_password),
           store_name        = COALESCE(${store_name ?? null}, store_name),
@@ -119,7 +152,7 @@ export const deleteSeller = async (req, res) => {
 
   try {
     const deleted = await sql`
-      DELETE FROM sellers WHERE seller_id = ${id}
+      DELETE FROM Sellers WHERE seller_id = ${id}
       RETURNING seller_id, seller_name
     `;
 
@@ -145,7 +178,7 @@ export const addSellerEmail = async (req, res) => {
 
   try {
     await sql`
-      INSERT INTO seller_email (seller_id, email)
+      INSERT INTO Seller_Email (seller_id, email)
       VALUES (${id}, ${email})
     `;
     res.status(201).json({ success: true, data: { seller_id: Number(id), email } });
@@ -166,7 +199,7 @@ export const addSellerPhone = async (req, res) => {
 
   try {
     await sql`
-      INSERT INTO seller_phone (seller_id, phone_number)
+      INSERT INTO Seller_Phone (seller_id, phone_number)
       VALUES (${id}, ${phone_number})
     `;
     res.status(201).json({ success: true, data: { seller_id: Number(id), phone_number } });
@@ -179,21 +212,21 @@ export const addSellerPhone = async (req, res) => {
 // Add address to seller
 export const addSellerAddress = async (req, res) => {
   const { id } = req.params;
-  const { house_no, road_no, postal_code } = req.body;
+  const { house_no, road_no, postal_code, area, district, division, country } = req.body;
 
-  if (!postal_code) {
-    return res.status(400).json({ success: false, message: "postal_code is required" });
+  if (!postal_code || !area || !district || !division || !country) {
+    return res.status(400).json({ success: false, message: "postal_code, area, district, division, and country are required" });
   }
 
   try {
     const addr = await sql`
-      INSERT INTO address (house_no, road_no, postal_code)
-      VALUES (${house_no ?? null}, ${road_no ?? null}, ${postal_code})
+      INSERT INTO Address (house_no, road_no, postal_code, area, district, division, country)
+      VALUES (${house_no ?? null}, ${road_no ?? null}, ${postal_code}, ${area}, ${district}, ${division}, ${country})
       RETURNING address_id
     `;
 
     await sql`
-      INSERT INTO seller_address (seller_id, address_id)
+      INSERT INTO Seller_Address (seller_id, address_id)
       VALUES (${id}, ${addr[0].address_id})
     `;
 
@@ -201,5 +234,113 @@ export const addSellerAddress = async (req, res) => {
   } catch (error) {
     console.error("Error in addSellerAddress:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// Get seller profile with all details
+export const getSellerProfile = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const seller = await sql`
+      SELECT seller_id, seller_name, store_name, store_description,
+             seller_since, is_verified
+      FROM Sellers WHERE seller_id = ${id}
+    `;
+
+    if (seller.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    // Get seller's emails
+    const emails = await sql`
+      SELECT email FROM Seller_Email WHERE seller_id = ${id}
+    `;
+
+    // Get seller's phones
+    const phones = await sql`
+      SELECT phone_number FROM Seller_Phone WHERE seller_id = ${id}
+    `;
+
+    // Get seller's addresses
+    const addresses = await sql`
+      SELECT a.address_id, a.house_no, a.road_no, a.postal_code,
+             a.area, a.district, a.division, a.country
+      FROM Seller_Address sa
+      JOIN Address a ON sa.address_id = a.address_id
+      WHERE sa.seller_id = ${id}
+    `;
+
+    const sellerProfile = {
+      ...seller[0],
+      emails: emails.map(e => e.email),
+      phones: phones.map(p => p.phone_number),
+      addresses
+    };
+
+    res.status(200).json({ success: true, data: sellerProfile });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// Update seller profile
+export const updateSellerProfile = async (req, res) => {
+  const { id } = req.params;
+  const { seller_name, seller_password, store_name, store_description, emails, phones } = req.body;
+
+  try {
+    // Update basic seller info
+    const updated = await sql`
+      UPDATE Sellers
+      SET seller_name      = COALESCE(${seller_name ?? null}, seller_name),
+          seller_password   = COALESCE(${seller_password ?? null}, seller_password),
+          store_name        = COALESCE(${store_name ?? null}, store_name),
+          store_description = COALESCE(${store_description ?? null}, store_description)
+      WHERE seller_id = ${id}
+      RETURNING seller_id, seller_name, store_name, store_description, is_verified
+    `;
+
+    if (updated.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    // Update emails if provided
+    if (emails && Array.isArray(emails)) {
+      // Remove existing emails
+      await sql`DELETE FROM Seller_Email WHERE seller_id = ${id}`;
+      
+      // Add new emails
+      for (const email of emails) {
+        if (email.trim()) {
+          await sql`
+            INSERT INTO Seller_Email (seller_id, email)
+            VALUES (${id}, ${email})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+      }
+    }
+
+    // Update phones if provided
+    if (phones && Array.isArray(phones)) {
+      // Remove existing phones
+      await sql`DELETE FROM Seller_Phone WHERE seller_id = ${id}`;
+      
+      // Add new phones
+      for (const phone of phones) {
+        if (phone.trim()) {
+          await sql`
+            INSERT INTO Seller_Phone (seller_id, phone_number)
+            VALUES (${id}, ${phone})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+      }
+    }
+
+    res.status(200).json({ success: true, data: updated[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

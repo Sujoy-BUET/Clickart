@@ -128,7 +128,7 @@ export const createProductReview = async (req, res) => {
     `;
 
     await sql`
-      INSERT INTO review_product (review_id, product_id)
+      INSERT INTO Review_Product (review_id, product_id)
       VALUES (${newReview[0].review_id}, ${product_id})
     `;
 
@@ -159,7 +159,7 @@ export const createSellerReview = async (req, res) => {
     `;
 
     await sql`
-      INSERT INTO review_seller (review_id, seller_id)
+      INSERT INTO Review_Seller (review_id, seller_id)
       VALUES (${newReview[0].review_id}, ${seller_id})
     `;
 

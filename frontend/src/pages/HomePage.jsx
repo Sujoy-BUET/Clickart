@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Truck, ShieldCheck, CreditCard, Headphones } from 'lucide-react';
 import { getProducts } from '../api';
+import { useAuth } from '../context/AuthContext';
 import ProductCard from '../components/ProductCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -13,6 +14,7 @@ const features = [
 ];
 
 export default function HomePage() {
+  const { isSeller } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -99,20 +101,22 @@ export default function HomePage() {
       </section>
 
       {/* CTA */}
-      <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
-        <div className="overflow-hidden rounded-2xl border border-gray-800 bg-gradient-to-br from-violet-900/20 via-gray-900 to-gray-900 p-10 text-center lg:p-14">
-          <h2 className="text-2xl lg:text-3xl font-bold">Start Selling on ClicKart</h2>
-          <p className="mt-3 text-gray-400 max-w-lg mx-auto">
-            Join thousands of sellers and reach millions of customers. Easy setup, powerful tools, and dedicated support.
-          </p>
-          <Link
-            to="/register"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-7 py-3 text-sm font-semibold text-white hover:bg-violet-500 transition"
-          >
-            Become a Seller <ArrowRight className="h-4 w-4" />
-          </Link>
-        </div>
-      </section>
+      {!isSeller() && (
+        <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+          <div className="overflow-hidden rounded-2xl border border-gray-800 bg-gradient-to-br from-violet-900/20 via-gray-900 to-gray-900 p-10 text-center lg:p-14">
+            <h2 className="text-2xl lg:text-3xl font-bold">Start Selling on ClicKart</h2>
+            <p className="mt-3 text-gray-400 max-w-lg mx-auto">
+              Join thousands of sellers and reach millions of customers. Easy setup, powerful tools, and dedicated support.
+            </p>
+            <Link
+              to="/seller/register"
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-7 py-3 text-sm font-semibold text-white hover:bg-violet-500 transition"
+            >
+              Become a Seller <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </section>
+      )}
     </>
   );
 }

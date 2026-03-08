@@ -55,8 +55,8 @@ export default function Footer() {
             <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Sellers</h4>
             <ul className="mt-3 space-y-2">
               {[
-                { label: 'Seller Dashboard', to: '/sellers/dashboard/1' },
-                { label: 'Become a Seller', to: '/register' },
+                { label: 'Seller Dashboard', to: '/seller/dashboard' },
+                { label: 'Become a Seller', to: '/seller/register' },
                 { label: 'All Sellers', to: '/sellers' },
               ].map(({ label, to }) => (
                 <li key={label}>

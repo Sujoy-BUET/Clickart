@@ -14,8 +14,7 @@ export const getProducts = async (req, res) => {
 
     res.status(200).json({ success: true, data: products });
   } catch (error) {
-    console.error("Error in getProducts:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -40,9 +39,9 @@ export const getProduct = async (req, res) => {
     const variations = await sql`
       SELECT pv.product_variation_id, pv.price, pv.stock_quantity,
              vt.variation_type_name, v.variation_value
-      FROM product_variation pv
-      JOIN variation v      ON pv.variation_id      = v.variation_id
-      JOIN variationtype vt ON v.variation_type_id   = vt.variation_type_id
+      FROM Product_Variation pv
+      JOIN Variation v      ON pv.variation_id      = v.variation_id
+      JOIN VariationType vt ON v.variation_type_id   = vt.variation_type_id
       WHERE pv.product_id = ${id}
     `;
 
@@ -57,21 +56,16 @@ export const getProduct = async (req, res) => {
 export const createProduct = async (req, res) => {
   const { product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id } = req.body;
 
-  if (!product_name || !price || !stock_quantity || !seller_id || !category_id || !brand_id) {
-    return res.status(400).json({ success: false, message: "product_name, price, stock_quantity, seller_id, category_id, and brand_id are required" });
-  }
-
   try {
     const newProduct = await sql`
-      INSERT INTO product (product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
+      INSERT INTO Product (product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
       VALUES (${product_name}, ${description ?? null}, ${price}, ${stock_quantity}, ${product_image ?? null}, ${seller_id}, ${category_id}, ${brand_id})
       RETURNING *
     `;
 
     res.status(201).json({ success: true, data: newProduct[0] });
   } catch (error) {
-    console.error("Error in createProduct:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -82,7 +76,7 @@ export const updateProduct = async (req, res) => {
 
   try {
     const updated = await sql`
-      UPDATE product
+      UPDATE Product
       SET product_name   = COALESCE(${product_name ?? null}, product_name),
           description    = COALESCE(${description ?? null}, description),
           price          = COALESCE(${price ?? null}, price),
@@ -112,7 +106,7 @@ export const deleteProduct = async (req, res) => {
 
   try {
     const deleted = await sql`
-      DELETE FROM product WHERE product_id = ${id} RETURNING *
+      DELETE FROM Product WHERE product_id = ${id} RETURNING *
     `;
 
     if (deleted.length === 0) {

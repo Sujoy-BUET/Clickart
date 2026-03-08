@@ -5,8 +5,8 @@ export const getOrders = async (req, res) => {
   try {
     const orders = await sql`
       SELECT o.*, da.address_id AS delivery_address_id
-      FROM orders o
-      LEFT JOIN delivery_address da ON o.order_id = da.order_id
+      FROM Orders o
+      LEFT JOIN Delivery_Address da ON o.order_id = da.order_id
       ORDER BY o.order_id DESC
     `;
     res.status(200).json({ success: true, data: orders });
@@ -24,13 +24,12 @@ export const getOrder = async (req, res) => {
     const order = await sql`
       SELECT o.*,
              a.address_id, a.house_no, a.road_no, a.postal_code,
-             pa.area, pa.district, pa.division, pa.country,
+             a.area, a.district, a.division, a.country,
              cp.code AS coupon_code, cp.discount_type, cp.discount_value
-      FROM orders o
-      LEFT JOIN delivery_address da ON o.order_id  = da.order_id
-      LEFT JOIN address a           ON da.address_id = a.address_id
-      LEFT JOIN postalarea pa       ON a.postal_code = pa.postal_code
-      LEFT JOIN coupon cp           ON o.coupon_id   = cp.coupon_id
+      FROM Orders o
+      LEFT JOIN Delivery_Address da ON o.order_id  = da.order_id
+      LEFT JOIN Address a           ON da.address_id = a.address_id
+      LEFT JOIN Coupon cp           ON o.coupon_id   = cp.coupon_id
       WHERE o.order_id = ${id}
     `;
 
@@ -52,8 +51,8 @@ export const getUserOrders = async (req, res) => {
   try {
     const orders = await sql`
       SELECT o.*, da.address_id AS delivery_address_id
-      FROM orders o
-      LEFT JOIN delivery_address da ON o.order_id = da.order_id
+      FROM Orders o
+      LEFT JOIN Delivery_Address da ON o.order_id = da.order_id
       WHERE o.user_id = ${userId}
       ORDER BY o.order_id DESC
     `;
@@ -75,13 +74,13 @@ export const createOrder = async (req, res) => {
 
   try {
     const newOrder = await sql`
-      INSERT INTO orders (user_id, cart_id, coupon_id, order_status, total_amount)
+      INSERT INTO Orders (user_id, cart_id, coupon_id, order_status, total_amount)
       VALUES (${user_id}, ${cart_id}, ${coupon_id ?? null}, 'PENDING', ${total_amount})
       RETURNING *
     `;
 
     await sql`
-      INSERT INTO delivery_address (order_id, address_id)
+      INSERT INTO Delivery_Address (order_id, address_id)
       VALUES (${newOrder[0].order_id}, ${address_id})
     `;
 
@@ -108,7 +107,7 @@ export const updateOrderStatus = async (req, res) => {
 
   try {
     const updated = await sql`
-      UPDATE orders
+      UPDATE Orders
       SET order_status = ${order_status}
       WHERE order_id = ${id}
       RETURNING *
@@ -131,10 +130,10 @@ export const deleteOrder = async (req, res) => {
 
   try {
     // Remove dependent delivery_address row first
-    await sql`DELETE FROM delivery_address WHERE order_id = ${id}`;
+    await sql`DELETE FROM Delivery_Address WHERE order_id = ${id}`;
 
     const deleted = await sql`
-      DELETE FROM orders WHERE order_id = ${id} RETURNING *
+      DELETE FROM Orders WHERE order_id = ${id} RETURNING *
     `;
 
     if (deleted.length === 0) {

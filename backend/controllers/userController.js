@@ -1,16 +1,50 @@
 import { sql } from "../config/db.js";
 
+// User Authentication
+export const authenticateUser = async (req, res) => {
+  const { user_name, password } = req.body;
+
+  try {
+    const user = await sql`
+      SELECT user_id, user_name, password FROM Users WHERE user_name = ${user_name}
+    `;
+
+    if (user.length === 0 || user[0].password !== password) {
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+
+    // Get user's emails and phones
+    const emails = await sql`
+      SELECT email FROM User_Email WHERE user_id = ${user[0].user_id}
+    `;
+    
+    const phones = await sql`
+      SELECT phone_number FROM User_Phone WHERE user_id = ${user[0].user_id}
+    `;
+
+    const userData = {
+      user_id: user[0].user_id,
+      user_name: user[0].user_name,
+      emails: emails.map(e => e.email),
+      phones: phones.map(p => p.phone_number)
+    };
+
+    res.status(200).json({ success: true, data: userData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
 // Get all users
 export const getUsers = async (req, res) => {
   try {
     const users = await sql`
-      SELECT user_id, user_name FROM users
+      SELECT user_id, user_name,password FROM Users
       ORDER BY user_id DESC
     `;
     res.status(200).json({ success: true, data: users });
   } catch (error) {
-    console.error("Error in getUsers:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -20,7 +54,7 @@ export const getUser = async (req, res) => {
 
   try {
     const user = await sql`
-      SELECT user_id, user_name FROM users WHERE user_id = ${id}
+      SELECT user_id, user_name FROM Users WHERE user_id = ${id}
     `;
 
     if (user.length === 0) {
@@ -29,39 +63,47 @@ export const getUser = async (req, res) => {
 
     const addresses = await sql`
       SELECT a.address_id, a.house_no, a.road_no, a.postal_code,
-             pa.area, pa.district, pa.division, pa.country
-      FROM user_address ua
-      JOIN address a ON ua.address_id = a.address_id
-      LEFT JOIN postalarea pa ON a.postal_code = pa.postal_code
+             a.area, a.district, a.division, a.country
+      FROM User_Address ua
+      JOIN Address a ON ua.address_id = a.address_id
       WHERE ua.user_id = ${id}
     `;
 
     res.status(200).json({ success: true, data: { ...user[0], addresses } });
   } catch (error) {
-    console.error("Error in getUser:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
 // Create new user
 export const createUser = async (req, res) => {
-  const { user_name, password } = req.body;
-
-  if (!user_name || !password) {
-    return res.status(400).json({ success: false, message: "user_name and password are required" });
-  }
+  const { user_name, password, email, phone_number } = req.body;
 
   try {
     const newUser = await sql`
-      INSERT INTO users (user_name, password)
+      INSERT INTO Users (user_name, password)
       VALUES (${user_name}, ${password})
       RETURNING user_id, user_name
     `;
-
+    const user_id = newUser[0]?.user_id;
+    // Add email and phone if provided
+    if (user_id && email) {
+      await sql`
+        INSERT INTO User_Email (user_id, email)
+        VALUES (${user_id}, ${email})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+    if (user_id && phone_number) {
+      await sql`
+        INSERT INTO User_Phone (user_id, phone_number)
+        VALUES (${user_id}, ${phone_number})
+        ON CONFLICT DO NOTHING
+      `;
+    }
     res.status(201).json({ success: true, data: newUser[0] });
   } catch (error) {
-    console.error("Error in createUser:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -72,7 +114,7 @@ export const updateUser = async (req, res) => {
 
   try {
     const updatedUser = await sql`
-      UPDATE users
+      UPDATE Users
       SET user_name = COALESCE(${user_name ?? null}, user_name),
           password  = COALESCE(${password ?? null}, password)
       WHERE user_id = ${id}
@@ -85,8 +127,7 @@ export const updateUser = async (req, res) => {
 
     res.status(200).json({ success: true, data: updatedUser[0] });
   } catch (error) {
-    console.error("Error in updateUser:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
@@ -96,7 +137,7 @@ export const deleteUser = async (req, res) => {
 
   try {
     const deletedUser = await sql`
-      DELETE FROM users
+      DELETE FROM Users
       WHERE user_id = ${id}
       RETURNING user_id, user_name
     `;
@@ -105,37 +146,135 @@ export const deleteUser = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    res.status(200).json({ success: true, message: "User deleted successfully" });
+    res.status(200).json({ success: true, message: "User deleted" });
   } catch (error) {
-    console.error("Error in deleteUser:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
 // Add address to user
 export const addUserAddress = async (req, res) => {
   const { id } = req.params;
-  const { house_no, road_no, postal_code } = req.body;
-
-  if (!postal_code) {
-    return res.status(400).json({ success: false, message: "postal_code is required" });
-  }
+  const { house_no, road_no, postal_code, area, district, division, country } = req.body;
 
   try {
     const addr = await sql`
-      INSERT INTO address (house_no, road_no, postal_code)
-      VALUES (${house_no ?? null}, ${road_no ?? null}, ${postal_code})
+      INSERT INTO Address (house_no, road_no, postal_code, area, district, division, country)
+      VALUES (${house_no ?? null}, ${road_no ?? null}, ${postal_code}, ${area}, ${district}, ${division}, ${country})
       RETURNING address_id
     `;
 
     await sql`
-      INSERT INTO user_address (user_id, address_id)
+      INSERT INTO User_Address (user_id, address_id)
       VALUES (${id}, ${addr[0].address_id})
     `;
 
     res.status(201).json({ success: true, data: { address_id: addr[0].address_id } });
   } catch (error) {
-    console.error("Error in addUserAddress:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// Get user profile with all details
+export const getUserProfile = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const user = await sql`
+      SELECT user_id, user_name FROM Users WHERE user_id = ${id}
+    `;
+
+    if (user.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Get user's emails
+    const emails = await sql`
+      SELECT email FROM User_Email WHERE user_id = ${id}
+    `;
+    
+    // Get user's phones
+    const phones = await sql`
+      SELECT phone_number FROM User_Phone WHERE user_id = ${id}
+    `;
+
+    // Get user's addresses
+    const addresses = await sql`
+      SELECT a.address_id, a.house_no, a.road_no, a.postal_code,
+             a.area, a.district, a.division, a.country
+      FROM User_Address ua
+      JOIN Address a ON ua.address_id = a.address_id
+      WHERE ua.user_id = ${id}
+    `;
+
+    const userProfile = {
+      ...user[0],
+      emails: emails.map(e => e.email),
+      phones: phones.map(p => p.phone_number),
+      addresses
+    };
+
+    res.status(200).json({ success: true, data: userProfile });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// Update user profile
+export const updateUserProfile = async (req, res) => {
+  const { id } = req.params;
+  const { user_name, password, emails, phones } = req.body;
+
+  try {
+    // Update basic user info
+    const updatedUser = await sql`
+      UPDATE Users
+      SET user_name = COALESCE(${user_name ?? null}, user_name),
+          password  = COALESCE(${password ?? null}, password)
+      WHERE user_id = ${id}
+      RETURNING user_id, user_name
+    `;
+
+    if (updatedUser.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Update emails if provided
+    if (emails && Array.isArray(emails)) {
+      // Remove existing emails
+      await sql`DELETE FROM User_Email WHERE user_id = ${id}`;
+      
+      // Add new emails
+      for (const email of emails) {
+        if (email.trim()) {
+          await sql`
+            INSERT INTO User_Email (user_id, email)
+            VALUES (${id}, ${email})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+      }
+    }
+
+    // Update phones if provided
+    if (phones && Array.isArray(phones)) {
+      // Remove existing phones
+      await sql`DELETE FROM User_Phone WHERE user_id = ${id}`;
+      
+      // Add new phones
+      for (const phone of phones) {
+        if (phone.trim()) {
+          await sql`
+            INSERT INTO User_Phone (user_id, phone_number)
+            VALUES (${id}, ${phone})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+      }
+    }
+
+    res.status(200).json({ success: true, data: updatedUser[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

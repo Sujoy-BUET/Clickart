@@ -4,7 +4,7 @@ import { sql } from "../config/db.js";
 export const getPayments = async (req, res) => {
   try {
     const payments = await sql`
-      SELECT * FROM payment ORDER BY payment_id DESC
+      SELECT * FROM Payment ORDER BY payment_id DESC
     `;
     res.status(200).json({ success: true, data: payments });
   } catch (error) {
@@ -19,7 +19,7 @@ export const getPayment = async (req, res) => {
 
   try {
     const payment = await sql`
-      SELECT * FROM payment WHERE payment_id = ${id}
+      SELECT * FROM Payment WHERE payment_id = ${id}
     `;
 
     if (payment.length === 0) {
@@ -39,7 +39,7 @@ export const getPaymentsByOrder = async (req, res) => {
 
   try {
     const payments = await sql`
-      SELECT * FROM payment WHERE order_id = ${orderId}
+      SELECT * FROM Payment WHERE order_id = ${orderId}
       ORDER BY payment_id DESC
     `;
 
@@ -93,7 +93,7 @@ export const updatePaymentStatus = async (req, res) => {
 
   try {
     const updated = await sql`
-      UPDATE payment
+      UPDATE Payment
       SET payment_status = ${payment_status}
       WHERE payment_id = ${id}
       RETURNING *
@@ -116,7 +116,7 @@ export const deletePayment = async (req, res) => {
 
   try {
     const deleted = await sql`
-      DELETE FROM payment WHERE payment_id = ${id} RETURNING *
+      DELETE FROM Payment WHERE payment_id = ${id} RETURNING *
     `;
 
     if (deleted.length === 0) {

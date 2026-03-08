@@ -3,7 +3,7 @@ import { getProducts } from '../api';
 import ProductCard from '../components/ProductCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import { SlidersHorizontal, Package } from 'lucide-react';
+import { SlidersHorizontal, Package, Search } from 'lucide-react';
 
 export default function ProductListPage() {
   const [products, setProducts] = useState([]);
@@ -48,14 +48,17 @@ export default function ProductListPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, brand, or category..."
-          className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition w-full sm:max-w-sm"
-        />
+      <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+        <div className="relative flex-1 w-full sm:max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, brand, or category..."
+            className="w-full rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+          />
+        </div>
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4 text-gray-500" />
           <select

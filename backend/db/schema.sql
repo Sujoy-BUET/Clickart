@@ -35,6 +35,22 @@ CREATE TABLE IF NOT EXISTS Users (
     password VARCHAR(255) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS User_Email (
+    user_id INT NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    PRIMARY KEY (user_id, email),
+    UNIQUE (email),
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS User_Phone (
+    user_id INT NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    PRIMARY KEY (user_id, phone_number),
+    UNIQUE (phone_number),
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+);
+
 CREATE TABLE IF NOT EXISTS Sellers (
     seller_id SERIAL PRIMARY KEY,
     seller_name VARCHAR(100) NOT NULL,
@@ -63,20 +79,15 @@ CREATE TABLE IF NOT EXISTS Seller_Phone (
 
 -- ===================== GEOGRAPHY & ADDRESSES =====================
 
-CREATE TABLE IF NOT EXISTS PostalArea (
-    postal_code VARCHAR(20) PRIMARY KEY,
-    area VARCHAR(100),
-    district VARCHAR(100),
-    division VARCHAR(100),
-    country VARCHAR(50)
-);
-
 CREATE TABLE IF NOT EXISTS Address (
     address_id SERIAL PRIMARY KEY,
     house_no VARCHAR(50),
     road_no VARCHAR(50),
     postal_code VARCHAR(20) NOT NULL,
-    FOREIGN KEY (postal_code) REFERENCES PostalArea(postal_code)
+    area VARCHAR(100),
+    district VARCHAR(100),
+    division VARCHAR(100),
+    country VARCHAR(50)
 );
 
 CREATE TABLE IF NOT EXISTS User_Address (
