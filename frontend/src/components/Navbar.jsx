@@ -18,8 +18,8 @@ export default function Navbar() {
   ] : [
     { to: '/',         label: 'Home',     icon: Home },
     { to: '/products', label: 'Products', icon: Package },
-    { to: `/cart/${user?.user_id || 1}`,   label: 'Cart',     icon: ShoppingCart },
-    { to: `/orders/user/${user?.user_id || 1}`, label: 'Orders', icon: Package },
+    { to: user?.user_id ? `/cart/${user.user_id}` : '/login', label: 'Cart', icon: ShoppingCart },
+    { to: user?.user_id ? `/orders/user/${user.user_id}` : '/login', label: 'Orders', icon: Package },
     { to: '/sellers',  label: 'Sellers',  icon: Store },
     { to: '/profile',  label: 'Profile',  icon: User },
   ];

@@ -14,10 +14,10 @@ import {
 const router = express.Router();
 
 router.get("/", getReviews);
-router.get("/:id", getReview);
 router.get("/product/:productId", getProductReviews);
 router.get("/seller/:sellerId", getSellerReviews);
 router.get("/user/:userId", getUserReviews);
+router.get("/:id", getReview);
 router.post("/product", createProductReview);
 router.post("/seller", createSellerReview);
 router.put("/:id", updateReview);

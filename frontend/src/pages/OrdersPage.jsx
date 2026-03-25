@@ -62,7 +62,7 @@ export default function OrdersPage() {
                   <span className="text-xs text-gray-500">Order #</span>
                   <span className="ml-1 text-sm font-semibold text-gray-200">{order.order_id}</span>
                 </div>
-                <StatusBadge status={order.status} />
+                <StatusBadge status={order.order_status || order.status} />
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
@@ -72,7 +72,7 @@ export default function OrdersPage() {
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Date</p>
-                  <p className="text-gray-300">{order.created_at ? new Date(order.created_at).toLocaleDateString() : '—'}</p>
+                  <p className="text-gray-300">{order.order_date ? new Date(order.order_date).toLocaleDateString() : '—'}</p>
                 </div>
                 {order.coupon_code && (
                   <div>

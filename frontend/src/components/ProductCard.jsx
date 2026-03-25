@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ShoppingCart } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import StarRating from './StarRating';
 
 export default function ProductCard({ product }) {
@@ -39,7 +39,7 @@ export default function ProductCard({ product }) {
             to={`/products/${product_id}`}
             className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500 transition"
           >
-            <ShoppingCart className="h-3.5 w-3.5" />
+            <Eye className="h-3.5 w-3.5" />
             View
           </Link>
         </div>

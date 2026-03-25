@@ -2,17 +2,48 @@ import { sql } from "../config/db.js";
 
 // Get all products (with brand, category, seller info)
 export const getProducts = async (req, res) => {
+  const { category } = req.query;
+
   try {
-    const products = await sql`
-      SELECT p.*, b.brand_name, c.category_name, s.store_name
-      FROM product p
-      JOIN brand b    ON p.brand_id    = b.brand_id
-      JOIN category c ON p.category_id = c.category_id
-      JOIN sellers s  ON p.seller_id   = s.seller_id
-      ORDER BY p.product_id DESC
-    `;
+    let products;
+
+    if (category) {
+      products = await sql`
+        SELECT p.*, b.brand_name, c.category_name, s.store_name
+        FROM product p
+        JOIN brand b    ON p.brand_id    = b.brand_id
+        JOIN category c ON p.category_id = c.category_id
+        JOIN sellers s  ON p.seller_id   = s.seller_id
+        WHERE c.category_name ILIKE ${category} OR c.category_id::text = ${category}
+        ORDER BY p.product_id DESC
+      `;
+    } else {
+      products = await sql`
+        SELECT p.*, b.brand_name, c.category_name, s.store_name
+        FROM product p
+        JOIN brand b    ON p.brand_id    = b.brand_id
+        JOIN category c ON p.category_id = c.category_id
+        JOIN sellers s  ON p.seller_id   = s.seller_id
+        ORDER BY p.product_id DESC
+      `;
+    }
 
     res.status(200).json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// Get all categories
+export const getCategories = async (_req, res) => {
+  try {
+    const categories = await sql`
+      SELECT category_id, category_name
+      FROM Category
+      ORDER BY category_name ASC
+    `;
+
+    res.status(200).json({ success: true, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
   }
@@ -38,7 +69,7 @@ export const getProduct = async (req, res) => {
 
     const variations = await sql`
       SELECT pv.product_variation_id, pv.price, pv.stock_quantity,
-             vt.variation_type_name, v.variation_value
+             vt.variation_type_name AS variation_type, v.variation_value
       FROM Product_Variation pv
       JOIN Variation v      ON pv.variation_id      = v.variation_id
       JOIN VariationType vt ON v.variation_type_id   = vt.variation_type_id

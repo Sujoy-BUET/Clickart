@@ -1,19 +1,32 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Trash2, ShoppingBag, Minus, Plus, ArrowRight } from 'lucide-react';
-import { getCart, removeFromCart, addToCart } from '../api';
+import { getCart, getOrCreateCartByUser, removeFromCart, setCartItemQuantity } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 
 export default function CartPage() {
   const { userId } = useParams();
   const [items, setItems] = useState([]);
+  const [cartId, setCartId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [cartMsg, setCartMsg] = useState('');
 
   const fetchCart = () => {
     setLoading(true);
-    getCart(userId)
-      .then((d) => setItems(Array.isArray(d) ? d : d.items ?? []))
+    getOrCreateCartByUser(userId)
+      .then((cart) => {
+        setCartId(cart?.cart_id ?? null);
+        if (!cart?.cart_id) {
+          setItems([]);
+          return null;
+        }
+        return getCart(cart.cart_id);
+      })
+      .then((d) => {
+        if (d === null) return;
+        setItems(Array.isArray(d) ? d.filter((row) => row.product_variation_id) : []);
+      })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
@@ -21,16 +34,36 @@ export default function CartPage() {
   useEffect(fetchCart, [userId]);
 
   const handleRemove = async (product_variation_id) => {
+    if (!cartId) return;
+
     try {
-      await removeFromCart({ cart_id: Number(userId), product_variation_id });
+      const res = await removeFromCart({ cart_id: Number(cartId), product_variation_id });
+      if (!res?.success) {
+        setCartMsg(res?.message || 'Failed to remove item');
+        return;
+      }
       fetchCart();
     } catch { /* ignore */ }
   };
 
-  const handleQty = async (product_variation_id, newQty) => {
-    if (newQty < 1) return handleRemove(product_variation_id);
+  const handleQty = async (item, newQty) => {
+    if (!cartId) return;
+
+    if (newQty < 1) return handleRemove(item.product_variation_id);
+
     try {
-      await addToCart({ cart_id: Number(userId), product_variation_id, quantity: newQty });
+      const res = await setCartItemQuantity({
+        cart_id: Number(cartId),
+        product_variation_id: item.product_variation_id,
+        quantity: newQty,
+      });
+
+      if (!res?.success) {
+        setCartMsg(res?.message || 'Failed to update quantity');
+        return;
+      }
+
+      setCartMsg('');
       fetchCart();
     } catch { /* ignore */ }
   };
@@ -53,6 +86,11 @@ export default function CartPage() {
         />
       ) : (
         <>
+          {cartMsg && (
+            <div className="mb-4 rounded-lg border border-amber-600/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-300">
+              {cartMsg}
+            </div>
+          )}
           <div className="space-y-4">
             {items.map((item, idx) => (
               <div
@@ -80,14 +118,14 @@ export default function CartPage() {
                 {/* Qty */}
                 <div className="flex items-center gap-1 rounded-lg border border-gray-700">
                   <button
-                    onClick={() => handleQty(item.product_variation_id, Number(item.quantity) - 1)}
+                    onClick={() => handleQty(item, Number(item.quantity) - 1)}
                     className="px-2.5 py-1.5 text-gray-400 hover:text-white transition"
                   >
                     <Minus className="h-3.5 w-3.5" />
                   </button>
                   <span className="w-7 text-center text-xs font-medium">{item.quantity}</span>
                   <button
-                    onClick={() => handleQty(item.product_variation_id, Number(item.quantity) + 1)}
+                    onClick={() => handleQty(item, Number(item.quantity) + 1)}
                     className="px-2.5 py-1.5 text-gray-400 hover:text-white transition"
                   >
                     <Plus className="h-3.5 w-3.5" />

@@ -8,8 +8,12 @@ function request(url, options = {}) {
 }
 
 /* ── Products ── */
-export const getProducts     = async ()     => (await request('/products')).data;
+export const getProducts     = async (category) => {
+  const query = category ? `?category=${encodeURIComponent(category)}` : '';
+  return (await request(`/products${query}`)).data;
+};
 export const getProduct      = async (id)   => (await request(`/products/${id}`)).data;
+export const getCategories   = async ()     => (await request('/products/categories')).data;
 export const createProduct   = (body) => request('/products', { method: 'POST', body: JSON.stringify(body) });
 export const updateProduct   = (id, body) => request(`/products/${id}`, { method: 'PUT', body: JSON.stringify(body) });
 export const deleteProduct   = (id)   => request(`/products/${id}`, { method: 'DELETE' });
@@ -43,9 +47,11 @@ export const addSellerAddress = (id, body) => request(`/sellers/${id}/address`, 
 
 /* ── Cart ── */
 export const getCarts        = async ()     => (await request('/cart')).data;
+export const getOrCreateCartByUser = async (userId) => (await request(`/cart/user/${userId}`)).data;
 export const getCart         = async (id)   => (await request(`/cart/${id}`)).data;
 export const createCart      = (body) => request('/cart', { method: 'POST', body: JSON.stringify(body) });
 export const addToCart       = (body) => request('/cart/add', { method: 'POST', body: JSON.stringify(body) });
+export const setCartItemQuantity = (body) => request('/cart/quantity', { method: 'PUT', body: JSON.stringify(body) });
 export const removeFromCart  = (body) => request('/cart/remove', { method: 'DELETE', body: JSON.stringify(body) });
 export const deleteCart      = (id)   => request(`/cart/${id}`, { method: 'DELETE' });
 

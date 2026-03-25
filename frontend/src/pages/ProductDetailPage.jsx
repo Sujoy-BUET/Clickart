@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ShoppingCart, Minus, Plus, ArrowLeft, Star, Send } from 'lucide-react';
-import { getProduct, getProductReviews, addToCart, createProductReview } from '../api';
+import { getProduct, getProductReviews, addToCart, createProductReview, getOrCreateCartByUser } from '../api';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useAuth } from '../context/AuthContext';
 
 export default function ProductDetailPage() {
   const { id } = useParams();
+  const { user, isCustomer } = useAuth();
   const [product, setProduct] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +35,25 @@ export default function ProductDetailPage() {
 
   const handleAddToCart = async () => {
     if (!selectedVariation) return;
+
+    if (!isCustomer()) {
+      setCartMsg('Please login as a user to add items to cart.');
+      return;
+    }
+
     try {
-      await addToCart({ cart_id: 1, product_variation_id: selectedVariation.product_variation_id, quantity: qty });
+      const cart = await getOrCreateCartByUser(user.user_id);
+      const res = await addToCart({
+        cart_id: cart.cart_id,
+        product_variation_id: selectedVariation.product_variation_id,
+        quantity: qty,
+      });
+
+      if (!res?.success) {
+        setCartMsg(res?.message || 'Failed to add');
+        return;
+      }
+
       setCartMsg('Added to cart!');
       setTimeout(() => setCartMsg(''), 2500);
     } catch {
@@ -44,9 +63,22 @@ export default function ProductDetailPage() {
 
   const handleReview = async (e) => {
     e.preventDefault();
+
+    if (!isCustomer()) {
+      setCartMsg('Please login as a user to submit a review.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await createProductReview({ product_id: Number(id), reviewer_user_id: 1, rating, comment });
+      const created = await createProductReview({ product_id: Number(id), reviewer_user_id: user.user_id, rating, comment });
+
+      if (!created?.success) {
+        setCartMsg(created?.message || 'Failed to submit review.');
+        setSubmitting(false);
+        return;
+      }
+
       const r = await getProductReviews(id).catch(() => []);
       setReviews(Array.isArray(r) ? r : []);
       setComment('');
@@ -138,7 +170,7 @@ export default function ProductDetailPage() {
 
           {selectedVariation && (
             <p className="text-xs text-gray-600">
-              Stock: {selectedVariation.stock ?? '∞'} available
+              Stock: {selectedVariation.stock_quantity ?? '∞'} available
             </p>
           )}
         </div>
@@ -191,7 +223,7 @@ export default function ProductDetailPage() {
               <div key={r.review_id ?? i} className="rounded-xl border border-gray-800 bg-gray-900 p-5">
                 <div className="flex items-center justify-between mb-2">
                   <StarRating rating={r.rating} size={14} />
-                  <span className="text-xs text-gray-600">{r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</span>
+                  <span className="text-xs text-gray-600">{r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</span>
                 </div>
                 <p className="text-sm text-gray-300">{r.comment}</p>
                 {r.first_name && <p className="mt-2 text-xs text-gray-500">— {r.first_name} {r.last_name ?? ''}</p>}
