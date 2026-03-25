@@ -11,8 +11,8 @@ import {
 const router = express.Router();
 
 router.get("/", getOrders);
-router.get("/:id", getOrder);
 router.get("/user/:userId", getUserOrders);
+router.get("/:id", getOrder);
 router.post("/", createOrder);
 router.put("/:id/status", updateOrderStatus);
 router.delete("/:id", deleteOrder);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getProducts } from '../api';
+import { getCategories, getProducts } from '../api';
 import ProductCard from '../components/ProductCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
@@ -8,19 +8,38 @@ import { SlidersHorizontal, Package, Search } from 'lucide-react';
 export default function ProductListPage() {
   const [products, setProducts] = useState([]);
   const [filtered, setFiltered] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('default');
 
   useEffect(() => {
-    getProducts()
-      .then((d) => { setProducts(d); setFiltered(d); })
-      .catch(() => {})
+    Promise.all([
+      getProducts(),
+      getCategories().catch(() => []),
+    ])
+      .then(([productRows, categoryRows]) => {
+        const safeProducts = Array.isArray(productRows) ? productRows : [];
+        const safeCategories = Array.isArray(categoryRows) ? categoryRows : [];
+        setProducts(safeProducts);
+        setFiltered(safeProducts);
+        setCategories(safeCategories);
+      })
+      .catch(() => {
+        setProducts([]);
+        setFiltered([]);
+        setCategories([]);
+      })
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     let result = [...products];
+
+    if (selectedCategory !== 'all') {
+      result = result.filter((p) => p.category_name === selectedCategory);
+    }
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -37,7 +56,7 @@ export default function ProductListPage() {
     if (sortBy === 'name')       result.sort((a, b) => a.product_name.localeCompare(b.product_name));
 
     setFiltered(result);
-  }, [search, sortBy, products]);
+  }, [search, sortBy, products, selectedCategory]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -59,7 +78,17 @@ export default function ProductListPage() {
             className="w-full rounded-lg border border-gray-700 bg-gray-900 pl-10 pr-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="w-full sm:w-auto rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-violet-500 cursor-pointer"
+          >
+            <option value="all">All Categories</option>
+            {categories.map((c) => (
+              <option key={c.category_id} value={c.category_name}>{c.category_name}</option>
+            ))}
+          </select>
           <SlidersHorizontal className="h-4 w-4 text-gray-500" />
           <select
             value={sortBy}
