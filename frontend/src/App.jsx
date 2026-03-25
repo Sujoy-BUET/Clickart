@@ -18,6 +18,7 @@ import SellerProfilePage from './pages/SellerProfilePage';
 
 function App() {
   return (
+
     <AuthProvider>
       <BrowserRouter>
         <Routes>
