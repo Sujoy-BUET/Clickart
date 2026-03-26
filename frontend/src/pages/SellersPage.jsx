@@ -40,7 +40,7 @@ export default function SellersPage() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-semibold text-gray-100 truncate">{s.store_name}</h3>
-                  <p className="text-xs text-gray-500">{s.first_name} {s.last_name}</p>
+                  <p className="text-xs text-gray-500">{s.seller_name}</p>
                 </div>
               </div>
 
@@ -56,7 +56,7 @@ export default function SellersPage() {
               </div>
 
               <Link
-                to={`/sellers/dashboard/${s.seller_id}`}
+                to={`/seller/dashboard/${s.seller_id}`}
                 className="flex items-center gap-1.5 text-sm font-medium text-violet-400 hover:text-violet-300 transition"
               >
                 View Dashboard <ArrowRight className="h-3.5 w-3.5" />

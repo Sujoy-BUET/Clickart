@@ -4,13 +4,23 @@ import { sql } from "../config/db.js";
 export const authenticateSeller = async (req, res) => {
   const { seller_name, seller_password } = req.body;
 
+  if (!seller_name || !seller_password) {
+    return res.status(400).json({ success: false, message: "seller_name and seller_password are required" });
+  }
+
+  const normalizedSellerName = String(seller_name).trim();
+  const normalizedPassword = String(seller_password);
+
   try {
     const seller = await sql`
       SELECT seller_id, seller_name, seller_password, store_name, store_description, is_verified 
-      FROM Sellers WHERE seller_name = ${seller_name}
+      FROM Sellers
+      WHERE LOWER(TRIM(seller_name)) = LOWER(${normalizedSellerName})
+      ORDER BY seller_id DESC
+      LIMIT 1
     `;
 
-    if (seller.length === 0 || seller[0].seller_password !== seller_password) {
+    if (seller.length === 0 || String(seller[0].seller_password) !== normalizedPassword) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
@@ -44,7 +54,7 @@ export const getSellers = async (req, res) => {
   try {
     const sellers = await sql`
       SELECT seller_id, seller_name, store_name, store_description,
-             seller_since, is_verified,seller_password
+             seller_since, is_verified
       FROM Sellers
       ORDER BY seller_id DESC
     `;

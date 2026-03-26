@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSellerProfile, updateSellerProfile } from '../api';
 import { Store, User, Mail, Phone, ShieldCheck, Edit3, Save, X, Plus, Trash2 } from 'lucide-react';
@@ -6,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 function SellerProfilePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -19,8 +21,14 @@ function SellerProfilePage() {
   });
 
   useEffect(() => {
+    if (!user?.seller_id) {
+      setLoading(false);
+      navigate('/seller/login');
+      return;
+    }
+
     loadProfile();
-  }, []);
+  }, [user?.seller_id, navigate]);
 
   const loadProfile = async () => {
     if (!user?.seller_id) return;

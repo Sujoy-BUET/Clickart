@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { getSeller, getSellerReviews, getProducts } from '../api';
+import { createProduct, deleteProduct, getSeller, getSellerReviews, getProducts, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -15,11 +15,195 @@ export default function SellerDashboardPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('products');
+  const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [editingProductId, setEditingProductId] = useState(null);
+  const [showProductForm, setShowProductForm] = useState(false);
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [brandOptions, setBrandOptions] = useState([]);
+  const [productForm, setProductForm] = useState({
+    product_name: '',
+    description: '',
+    price: '',
+    stock_quantity: '',
+    product_image: '',
+    category_id: '',
+    brand_id: '',
+  });
 
   // Determine which seller to show
   const targetSellerId = sellerId || (isSeller() ? user?.seller_id : null);
 
+  const buildCategoryAndBrandOptions = (allProducts) => {
+    const categoryMap = new Map();
+    const brandMap = new Map();
+
+    allProducts.forEach((item) => {
+      if (item.category_id) {
+        categoryMap.set(item.category_id, {
+          category_id: item.category_id,
+          category_name: item.category_name || `Category ${item.category_id}`,
+        });
+      }
+
+      if (item.brand_id) {
+        brandMap.set(item.brand_id, {
+          brand_id: item.brand_id,
+          brand_name: item.brand_name || `Brand ${item.brand_id}`,
+        });
+      }
+    });
+
+    setCategoryOptions(Array.from(categoryMap.values()));
+    setBrandOptions(Array.from(brandMap.values()));
+  };
+
+  const refreshSellerProducts = useCallback(async () => {
+    const all = await getProducts().catch(() => []);
+    const allProducts = Array.isArray(all) ? all : [];
+    setProducts(allProducts.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
+    buildCategoryAndBrandOptions(allProducts);
+  }, [targetSellerId]);
+
+  const resetProductForm = () => {
+    setProductForm({
+      product_name: '',
+      description: '',
+      price: '',
+      stock_quantity: '',
+      product_image: '',
+      category_id: '',
+      brand_id: '',
+    });
+  };
+
+  const openCreateProductForm = () => {
+    setActionError('');
+    setActionSuccess('');
+    setEditingProductId(null);
+    resetProductForm();
+    setShowProductForm(true);
+  };
+
+  const openEditProductForm = (product) => {
+    setActionError('');
+    setActionSuccess('');
+    setEditingProductId(product.product_id);
+    setProductForm({
+      product_name: product.product_name || '',
+      description: product.description || '',
+      price: product.price ?? '',
+      stock_quantity: product.stock_quantity ?? '',
+      product_image: product.product_image || '',
+      category_id: product.category_id ?? '',
+      brand_id: product.brand_id ?? '',
+    });
+    setShowProductForm(true);
+  };
+
+  const closeProductForm = () => {
+    setShowProductForm(false);
+    setEditingProductId(null);
+    resetProductForm();
+  };
+
+  const handleProductFormChange = (field, value) => {
+    setProductForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleProductSubmit = async (e) => {
+    e.preventDefault();
+
+    setActionError('');
+    setActionSuccess('');
+
+    if (!isOwnDashboard) {
+      setActionError('You can only manage products from your own dashboard.');
+      return;
+    }
+
+    if (!productForm.category_id || !productForm.brand_id) {
+      setActionError('Please select both category and brand.');
+      return;
+    }
+
+    const payload = {
+      product_name: String(productForm.product_name).trim(),
+      description: String(productForm.description).trim() || null,
+      price: Number(productForm.price),
+      stock_quantity: Number(productForm.stock_quantity),
+      product_image: String(productForm.product_image).trim() || null,
+      category_id: Number(productForm.category_id),
+      brand_id: Number(productForm.brand_id),
+    };
+
+    if (!payload.product_name || Number.isNaN(payload.price) || Number.isNaN(payload.stock_quantity)) {
+      setActionError('Please provide valid product name, price, and stock.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      let response;
+
+      if (editingProductId) {
+        response = await updateProduct(editingProductId, payload);
+      } else {
+        response = await createProduct({
+          ...payload,
+          seller_id: Number(targetSellerId),
+        });
+      }
+
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to save product.');
+        return;
+      }
+
+      await refreshSellerProducts();
+      setActionSuccess(editingProductId ? 'Product updated successfully.' : 'Product created successfully.');
+      closeProductForm();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to save product.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    setActionError('');
+    setActionSuccess('');
+
+    if (!isOwnDashboard) {
+      setActionError('You can only delete products from your own dashboard.');
+      return;
+    }
+
+    const confirmed = window.confirm('Are you sure you want to delete this product?');
+    if (!confirmed) return;
+
+    setSubmitting(true);
+    try {
+      const response = await deleteProduct(productId);
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to delete product.');
+        return;
+      }
+
+      await refreshSellerProducts();
+      setActionSuccess('Product deleted successfully.');
+    } catch (err) {
+      setActionError(err?.message || 'Failed to delete product.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   useEffect(() => {
+    setError('');
+
     // Redirect if not authenticated and accessing /seller/dashboard
     if (!sellerId && !isAuthenticated()) {
       navigate('/seller/login');
@@ -45,11 +229,14 @@ export default function SellerDashboardPage() {
     ])
       .then(([s, r, p]) => {
         setSeller(s.data || s);
-        setReviews(Array.isArray(r) ? r : []);
+        setReviews(Array.isArray(r) ? r : (Array.isArray(r?.data) ? r.data : []));
         const all = Array.isArray(p) ? p : [];
-        setProducts(all.filter((x) => x.seller_id === Number(targetSellerId)));
+        setProducts(all.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
+        buildCategoryAndBrandOptions(all);
       })
-      .catch(() => {})
+      .catch(() => {
+        setError('Failed to load seller dashboard data.');
+      })
       .finally(() => setLoading(false));
   }, [targetSellerId, sellerId, isAuthenticated, isSeller, navigate]);
 
@@ -68,7 +255,7 @@ export default function SellerDashboardPage() {
     );
   }
 
-  const isOwnDashboard = !sellerId && isSeller() && targetSellerId === user?.seller_id;
+  const isOwnDashboard = isSeller() && Number(targetSellerId) === Number(user?.seller_id);
 
   const tabs = [
     { key: 'products', label: 'Products', count: products.length },
@@ -78,6 +265,12 @@ export default function SellerDashboardPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start gap-6 mb-8">
         <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-3xl font-bold text-white shadow-lg shadow-violet-600/20">
@@ -92,7 +285,7 @@ export default function SellerDashboardPage() {
               </span>
             )}
           </div>
-          <p className="mt-1 text-sm text-gray-400">{seller.first_name} {seller.last_name}</p>
+          <p className="mt-1 text-sm text-gray-400">{seller.seller_name}</p>
           <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-500">
             <span className="flex items-center gap-1"><Package className="h-4 w-4" /> {products.length} products</span>
             <span className="flex items-center gap-1"><Star className="h-4 w-4 text-amber-400" /> {reviews.length} reviews</span>
@@ -120,14 +313,124 @@ export default function SellerDashboardPage() {
       {/* Products tab */}
       {tab === 'products' && (
         <div>
+          {actionSuccess && (
+            <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+              {actionSuccess}
+            </div>
+          )}
+
+          {actionError && (
+            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {actionError}
+            </div>
+          )}
+
           {/* Add Product Button - only show on own dashboard */}
           {isOwnDashboard && (
             <div className="mb-6">
-              <button className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition">
+              <button
+                onClick={openCreateProductForm}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
+              >
                 <Plus className="w-4 h-4" />
                 Add Product
               </button>
             </div>
+          )}
+
+          {isOwnDashboard && showProductForm && (
+            <form onSubmit={handleProductSubmit} className="mb-6 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-gray-200">
+                  {editingProductId ? 'Edit Product' : 'Create Product'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={closeProductForm}
+                  className="text-xs text-gray-400 hover:text-gray-200 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <input
+                  required
+                  value={productForm.product_name}
+                  onChange={(e) => handleProductFormChange('product_name', e.target.value)}
+                  placeholder="Product name"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={productForm.price}
+                  onChange={(e) => handleProductFormChange('price', e.target.value)}
+                  placeholder="Price"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={productForm.stock_quantity}
+                  onChange={(e) => handleProductFormChange('stock_quantity', e.target.value)}
+                  placeholder="Stock quantity"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <input
+                  value={productForm.product_image}
+                  onChange={(e) => handleProductFormChange('product_image', e.target.value)}
+                  placeholder="Image URL (optional)"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <select
+                  required
+                  value={productForm.category_id}
+                  onChange={(e) => handleProductFormChange('category_id', e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                >
+                  <option value="">Select category</option>
+                  {categoryOptions.map((option) => (
+                    <option key={option.category_id} value={option.category_id}>
+                      {option.category_name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  required
+                  value={productForm.brand_id}
+                  onChange={(e) => handleProductFormChange('brand_id', e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                >
+                  <option value="">Select brand</option>
+                  {brandOptions.map((option) => (
+                    <option key={option.brand_id} value={option.brand_id}>
+                      {option.brand_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <textarea
+                value={productForm.description}
+                onChange={(e) => handleProductFormChange('description', e.target.value)}
+                placeholder="Product description (optional)"
+                rows={3}
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+              />
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {submitting ? 'Saving...' : (editingProductId ? 'Update Product' : 'Create Product')}
+              </button>
+            </form>
           )}
           
           {products.length === 0 ? (
@@ -162,10 +465,10 @@ export default function SellerDashboardPage() {
                     <span className="text-sm font-bold text-violet-400">₹{Number(p.price).toLocaleString('en-IN')}</span>
                     {isOwnDashboard && (
                       <div className="flex gap-1">
-                        <button className="p-1 text-gray-400 hover:text-blue-400 transition">
+                        <button onClick={() => openEditProductForm(p)} className="p-1 text-gray-400 hover:text-blue-400 transition">
                           <Edit className="w-4 h-4" />
                         </button>
-                        <button className="p-1 text-gray-400 hover:text-red-400 transition">
+                        <button onClick={() => handleDeleteProduct(p.product_id)} className="p-1 text-gray-400 hover:text-red-400 transition">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -234,7 +537,7 @@ export default function SellerDashboardPage() {
               <div className="space-y-2">
                 {seller.addresses.map((a, i) => (
                   <p key={i} className="text-sm text-gray-400">
-                    {a.address_line}, {a.city} — {a.postal_code}
+                    {[a.house_no, a.road_no, a.area, a.district, a.division, a.country].filter(Boolean).join(', ')}{a.postal_code ? ` - ${a.postal_code}` : ''}
                   </p>
                 ))}
               </div>

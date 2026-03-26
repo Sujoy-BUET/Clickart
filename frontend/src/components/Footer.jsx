@@ -1,7 +1,22 @@
 import { Link } from 'react-router-dom';
 import { Github, Twitter, Mail } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Footer() {
+  const { user, isSeller } = useAuth();
+
+  const accountLinks = [
+    { label: 'Login', to: '/login' },
+    { label: 'Register', to: '/register' },
+    { label: 'My Orders', to: user?.user_id ? `/orders/user/${user.user_id}` : '/login' },
+  ];
+
+  const sellerLinks = [
+    { label: 'Seller Dashboard', to: isSeller() ? '/seller/dashboard' : '/seller/login' },
+    { label: 'Become a Seller', to: '/seller/register' },
+    { label: 'All Sellers', to: '/sellers' },
+  ];
+
   return (
     <footer className="border-t border-gray-800 bg-gray-950 mt-auto">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
@@ -35,12 +50,7 @@ export default function Footer() {
           <div>
             <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Account</h4>
             <ul className="mt-3 space-y-2">
-              {[
-                { label: 'Login', to: '/login' },
-                { label: 'Register', to: '/register' },
-                { label: 'My Orders', to: '/orders/user/1' },
-                { label: 'My Cart', to: '/cart/1' },
-              ].map(({ label, to }) => (
+              {accountLinks.map(({ label, to }) => (
                 <li key={label}>
                   <Link to={to} className="text-sm text-gray-500 hover:text-violet-400 transition">
                     {label}
@@ -54,11 +64,7 @@ export default function Footer() {
           <div>
             <h4 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Sellers</h4>
             <ul className="mt-3 space-y-2">
-              {[
-                { label: 'Seller Dashboard', to: '/seller/dashboard' },
-                { label: 'Become a Seller', to: '/seller/register' },
-                { label: 'All Sellers', to: '/sellers' },
-              ].map(({ label, to }) => (
+              {sellerLinks.map(({ label, to }) => (
                 <li key={label}>
                   <Link to={to} className="text-sm text-gray-500 hover:text-violet-400 transition">
                     {label}

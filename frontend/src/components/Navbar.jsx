@@ -8,6 +8,7 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { user, logout, isAuthenticated, isSeller } = useAuth();
   const [open, setOpen] = useState(false);
+  const cartTo = user?.user_id ? `/cart/${user.user_id}` : '/login';
 
   const links = isSeller() ? [
     { to: '/',         label: 'Home',      icon: Home },
@@ -18,7 +19,6 @@ export default function Navbar() {
   ] : [
     { to: '/',         label: 'Home',     icon: Home },
     { to: '/products', label: 'Products', icon: Package },
-    { to: user?.user_id ? `/cart/${user.user_id}` : '/login', label: 'Cart', icon: ShoppingCart },
     { to: user?.user_id ? `/orders/user/${user.user_id}` : '/login', label: 'Orders', icon: Package },
     { to: '/sellers',  label: 'Sellers',  icon: Store },
     { to: '/profile',  label: 'Profile',  icon: User },
@@ -54,6 +54,17 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
+          {!isSeller() && (
+            <Link
+              to={cartTo}
+              className={`ml-1 flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                isActive(cartTo) ? 'bg-violet-600/20 text-violet-400' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+              }`}
+            >
+              <ShoppingCart className="h-4 w-4" />
+              Cart
+            </Link>
+          )}
           {isAuthenticated() ? (
             <div className="ml-2 flex items-center gap-2">
               <span className="text-sm text-gray-300">
@@ -79,9 +90,16 @@ export default function Navbar() {
         </div>
 
         {/* Mobile hamburger */}
-        <button onClick={() => setOpen(!open)} className="md:hidden rounded-lg p-2 text-gray-400 hover:bg-gray-800">
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="md:hidden flex items-center gap-1">
+          {!isSeller() && (
+            <Link to={cartTo} className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200">
+              <ShoppingCart className="h-5 w-5" />
+            </Link>
+          )}
+          <button onClick={() => setOpen(!open)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-800">
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile menu */}

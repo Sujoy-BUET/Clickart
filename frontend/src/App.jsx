@@ -37,6 +37,7 @@ function App() {
             <Route path="/seller/login" element={<SellerLoginPage />} />
             <Route path="/seller/register" element={<SellerRegisterPage />} />
             <Route path="/seller/dashboard" element={<SellerDashboardPage />} />
+            <Route path="/seller/dashboard/:sellerId" element={<SellerDashboardPage />} />
             <Route path="/seller/profile" element={<SellerProfilePage />} />
           </Route>
         </Routes>

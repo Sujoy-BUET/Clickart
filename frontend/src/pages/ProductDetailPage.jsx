@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ShoppingCart, Minus, Plus, ArrowLeft, Star, Send } from 'lucide-react';
 import { getProduct, getProductReviews, addToCart, createProductReview, getOrCreateCartByUser } from '../api';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/AuthContext';
+
+const DEFAULT_IMAGE = '/default-product.svg';
 
 export default function ProductDetailPage() {
   const { id } = useParams();
@@ -15,6 +17,8 @@ export default function ProductDetailPage() {
   const [selectedVariation, setSelectedVariation] = useState(null);
   const [qty, setQty] = useState(1);
   const [cartMsg, setCartMsg] = useState('');
+  const [currentImage, setCurrentImage] = useState(DEFAULT_IMAGE);
+  const [imageError, setImageError] = useState(false);
 
   // Review form
   const [rating, setRating] = useState(5);
@@ -87,6 +91,26 @@ export default function ProductDetailPage() {
     setSubmitting(false);
   };
 
+  const normalizedImage = useMemo(() => {
+    const raw = String(product?.product_image || '').trim();
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) return raw;
+    return `/${raw}`;
+  }, [product?.product_image]);
+
+  useEffect(() => {
+    setImageError(false);
+    setCurrentImage(normalizedImage || DEFAULT_IMAGE);
+  }, [normalizedImage]);
+
+  const handleImageError = () => {
+    if (currentImage !== DEFAULT_IMAGE) {
+      setCurrentImage(DEFAULT_IMAGE);
+      return;
+    }
+    setImageError(true);
+  };
+
   if (loading) return <LoadingSpinner />;
   if (!product) return <div className="py-24 text-center text-gray-500">Product not found.</div>;
 
@@ -100,9 +124,18 @@ export default function ProductDetailPage() {
       </Link>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        {/* Image placeholder */}
+        {/* Product image */}
         <div className="aspect-square rounded-2xl bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center border border-gray-800">
-          <span className="text-8xl font-extrabold text-gray-700 select-none">{product.product_name?.[0]}</span>
+          {!imageError ? (
+            <img
+              src={currentImage}
+              alt={product.product_name}
+              onError={handleImageError}
+              className="h-full w-full rounded-2xl object-cover"
+            />
+          ) : (
+            <span className="text-8xl font-extrabold text-gray-700 select-none">{product.product_name?.[0]}</span>
+          )}
         </div>
 
         {/* Info */}

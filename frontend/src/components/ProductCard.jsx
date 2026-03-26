@@ -1,17 +1,52 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Eye } from 'lucide-react';
 import StarRating from './StarRating';
 
+const DEFAULT_IMAGE = '/default-product.svg';
+
 export default function ProductCard({ product }) {
-  const { product_id, product_name, price, brand_name, category_name, store_name } = product;
+  const { product_id, product_name, price, brand_name, category_name, store_name, product_image } = product;
+  const [currentImage, setCurrentImage] = useState(DEFAULT_IMAGE);
+  const [imageError, setImageError] = useState(false);
+
+  const normalizedImage = useMemo(() => {
+    const raw = String(product_image || '').trim();
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) return raw;
+    return `/${raw}`;
+  }, [product_image]);
+
+  useEffect(() => {
+    setImageError(false);
+    setCurrentImage(normalizedImage || DEFAULT_IMAGE);
+  }, [normalizedImage]);
+
+  const handleImageError = () => {
+    if (currentImage !== DEFAULT_IMAGE) {
+      setCurrentImage(DEFAULT_IMAGE);
+      return;
+    }
+    setImageError(true);
+  };
 
   return (
     <div className="group flex flex-col overflow-hidden rounded-xl border border-gray-800 bg-gray-900 transition hover:border-gray-700 hover:shadow-lg hover:shadow-violet-500/5">
-      {/* Image placeholder */}
+      {/* Product image */}
       <div className="relative aspect-square bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-        <span className="text-5xl font-bold text-gray-700 select-none group-hover:scale-110 transition-transform">
-          {product_name?.[0] ?? 'P'}
-        </span>
+        {!imageError ? (
+          <img
+            src={currentImage}
+            alt={product_name}
+            onError={handleImageError}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <span className="text-5xl font-bold text-gray-700 select-none group-hover:scale-110 transition-transform">
+            {product_name?.[0] ?? 'P'}
+          </span>
+        )}
         {category_name && (
           <span className="absolute top-2 left-2 rounded-md bg-violet-600/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
             {category_name}
