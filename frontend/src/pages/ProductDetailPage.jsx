@@ -25,6 +25,8 @@ export default function ProductDetailPage() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const selectedStock = Number(selectedVariation?.stock_quantity ?? 0);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([getProduct(id), getProductReviews(id).catch(() => [])])
@@ -42,6 +44,16 @@ export default function ProductDetailPage() {
 
     if (!isCustomer()) {
       setCartMsg('Please login as a user to add items to cart.');
+      return;
+    }
+
+    if (selectedStock <= 0) {
+      setCartMsg('This variation is out of stock.');
+      return;
+    }
+
+    if (qty > selectedStock) {
+      setCartMsg(`Only ${selectedStock} item(s) available in stock.`);
       return;
     }
 
@@ -102,6 +114,15 @@ export default function ProductDetailPage() {
     setImageError(false);
     setCurrentImage(normalizedImage || DEFAULT_IMAGE);
   }, [normalizedImage]);
+
+  useEffect(() => {
+    if (!selectedVariation) return;
+    if (selectedStock <= 0) {
+      setQty(1);
+      return;
+    }
+    setQty((prev) => Math.min(Math.max(1, prev), selectedStock));
+  }, [selectedVariation, selectedStock]);
 
   const handleImageError = () => {
     if (currentImage !== DEFAULT_IMAGE) {
@@ -171,7 +192,7 @@ export default function ProductDetailPage() {
                     }`}
                   >
                     {v.variation_type}: {v.variation_value}
-                    {v.price && <span className="ml-2 text-xs text-gray-500">₹{Number(v.price).toLocaleString('en-IN')}</span>}
+                    {v.price && <span className="ml-2 text-xs text-gray-500">৳{Number(v.price).toLocaleString('en-BD')}</span>}
                   </button>
                 ))}
               </div>
@@ -180,14 +201,18 @@ export default function ProductDetailPage() {
 
           {/* Price + cart */}
           <div className="flex items-end gap-6 mt-2">
-            <span className="text-3xl font-extrabold text-violet-400">₹{Number(price).toLocaleString('en-IN')}</span>
+            <span className="text-3xl font-extrabold text-violet-400">৳{Number(price).toLocaleString('en-BD')}</span>
 
             <div className="flex items-center gap-1 rounded-lg border border-gray-700">
               <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="px-3 py-2 text-gray-400 hover:text-white transition">
                 <Minus className="h-4 w-4" />
               </button>
               <span className="w-8 text-center text-sm font-medium">{qty}</span>
-              <button onClick={() => setQty((q) => q + 1)} className="px-3 py-2 text-gray-400 hover:text-white transition">
+              <button
+                onClick={() => setQty((q) => (selectedStock > 0 ? Math.min(q + 1, selectedStock) : q))}
+                disabled={selectedStock <= 0 || qty >= selectedStock}
+                className="px-3 py-2 text-gray-400 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+              >
                 <Plus className="h-4 w-4" />
               </button>
             </div>
@@ -195,9 +220,10 @@ export default function ProductDetailPage() {
 
           <button
             onClick={handleAddToCart}
+            disabled={selectedStock <= 0}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white hover:bg-violet-500 transition shadow-lg shadow-violet-600/20"
           >
-            <ShoppingCart className="h-4 w-4" /> Add to Cart
+            <ShoppingCart className="h-4 w-4" /> {selectedStock <= 0 ? 'Out of Stock' : 'Add to Cart'}
           </button>
           {cartMsg && <p className="text-center text-sm text-emerald-400">{cartMsg}</p>}
 

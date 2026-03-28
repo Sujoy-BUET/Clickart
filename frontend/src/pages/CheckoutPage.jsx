@@ -5,8 +5,11 @@ import {
   getCart,
   getOrCreateCartByUser,
   getUserProfile,
+  getOrder,
   createOrder,
   createPayment,
+  updatePaymentStatus,
+  updateOrderStatus,
   setCartItemQuantity,
 } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -14,7 +17,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const paymentChoices = [
   { label: 'Cash on Delivery', value: 'COD' },
-  { label: 'Card', value: 'CARD' },
   { label: 'Mobile Banking', value: 'MOBILE_BANKING' },
 ];
 
@@ -48,6 +50,13 @@ export default function CheckoutPage() {
 
   const [couponCode, setCouponCode] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('COD');
+  const [pendingPayment, setPendingPayment] = useState(null);
+  const [finalizingPayment, setFinalizingPayment] = useState(false);
+  const [mobilePaymentInfo, setMobilePaymentInfo] = useState({
+    provider: '',
+    account_number: '',
+    transaction_id: '',
+  });
 
   const handleRefreshCart = async () => {
     setError('');
@@ -226,7 +235,18 @@ export default function CheckoutPage() {
         throw new Error(paymentRes?.message || 'Payment request failed');
       }
 
-      setSuccess(true);
+      const paymentData = paymentRes?.data ?? paymentRes;
+      const paymentId = paymentData?.payment_id;
+
+      if (!paymentId) {
+        throw new Error(paymentRes?.message || 'Payment initialization failed');
+      }
+
+      setPendingPayment({
+        order_id: orderId,
+        payment_id: paymentId,
+        payment_method: paymentMethod,
+      });
     } catch (err) {
       const msg = err?.message || 'Failed to place order. Please try again.';
       setError(msg);
@@ -236,6 +256,52 @@ export default function CheckoutPage() {
       }
     } finally {
       setPlacing(false);
+    }
+  };
+
+  const handleCompletePayment = async () => {
+    if (!pendingPayment?.payment_id || !pendingPayment?.order_id) return;
+
+    if (pendingPayment.payment_method === 'MOBILE_BANKING') {
+      if (!mobilePaymentInfo.provider || !mobilePaymentInfo.account_number || !mobilePaymentInfo.transaction_id) {
+        setError('Please provide mobile banking provider, account number, and transaction ID.');
+        return;
+      }
+    }
+
+    setError('');
+    setFinalizingPayment(true);
+
+    try {
+      const payRes = await updatePaymentStatus(pendingPayment.payment_id, { payment_status: 'PAID' });
+      if (!payRes?.success) {
+        throw new Error(payRes?.message || 'Failed to complete payment.');
+      }
+
+      const orderRes = await updateOrderStatus(pendingPayment.order_id, { order_status: 'CONFIRMED' });
+      if (!orderRes?.success) {
+        throw new Error(orderRes?.message || 'Payment done but failed to update order status.');
+      }
+
+      setPendingPayment(null);
+      setMobilePaymentInfo({ provider: '', account_number: '', transaction_id: '' });
+      setSuccess(true);
+    } catch (err) {
+      try {
+        const fallbackOrder = await getOrder(pendingPayment.order_id);
+        if (fallbackOrder?.order_status === 'CONFIRMED') {
+          setPendingPayment(null);
+          setMobilePaymentInfo({ provider: '', account_number: '', transaction_id: '' });
+          setSuccess(true);
+          return;
+        }
+      } catch {
+        // ignore fallback errors
+      }
+
+      setError(err?.message || 'Failed to complete payment. Please try again.');
+    } finally {
+      setFinalizingPayment(false);
     }
   };
 
@@ -436,14 +502,14 @@ export default function CheckoutPage() {
                   {item.product_name ?? 'Product'} x {item.quantity}
                 </span>
                 <span className="text-gray-200 font-medium">
-                  ₹{(Number(item.price || 0) * Number(item.quantity || 1)).toLocaleString('en-IN')}
+                  ৳{(Number(item.price || 0) * Number(item.quantity || 1)).toLocaleString('en-BD')}
                 </span>
               </div>
             ))}
           </div>
           <div className="mt-4 pt-4 border-t border-gray-800 flex justify-between">
             <span className="font-semibold text-gray-200">Total</span>
-            <span className="text-xl font-bold text-violet-400">₹{total.toLocaleString('en-IN')}</span>
+            <span className="text-xl font-bold text-violet-400">৳{total.toLocaleString('en-BD')}</span>
           </div>
         </div>
 
@@ -455,6 +521,56 @@ export default function CheckoutPage() {
           {placing ? 'Placing Order...' : 'Place Order'}
         </button>
       </form>
+
+      {pendingPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-100">Complete Payment</h3>
+            <p className="mt-1 text-sm text-gray-400">
+              Method: {pendingPayment.payment_method === 'COD' ? 'Cash on Delivery' : 'Mobile Banking'}
+            </p>
+            <p className="mt-1 text-sm text-gray-400">Total: ৳{total.toLocaleString('en-BD')}</p>
+
+            {pendingPayment.payment_method === 'COD' ? (
+              <div className="mt-4 rounded-lg border border-emerald-600/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+                Click confirm to place this order with Cash on Delivery.
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <input
+                  value={mobilePaymentInfo.provider}
+                  onChange={(e) => setMobilePaymentInfo((prev) => ({ ...prev, provider: e.target.value }))}
+                  placeholder="Provider (bKash / Nagad / Rocket)"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 outline-none focus:border-violet-500"
+                />
+                <input
+                  value={mobilePaymentInfo.account_number}
+                  onChange={(e) => setMobilePaymentInfo((prev) => ({ ...prev, account_number: e.target.value }))}
+                  placeholder="Mobile account number"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 outline-none focus:border-violet-500"
+                />
+                <input
+                  value={mobilePaymentInfo.transaction_id}
+                  onChange={(e) => setMobilePaymentInfo((prev) => ({ ...prev, transaction_id: e.target.value }))}
+                  placeholder="Transaction ID"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 outline-none focus:border-violet-500"
+                />
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={handleCompletePayment}
+                disabled={finalizingPayment}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 transition disabled:opacity-50"
+              >
+                {finalizingPayment ? 'Processing...' : 'Pay & Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

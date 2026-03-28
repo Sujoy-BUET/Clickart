@@ -214,50 +214,28 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    const txQueries = [
-      sql`
+    const newOrderRows = await sql`
+      WITH new_order AS (
         INSERT INTO Orders (user_id, cart_id, coupon_id, order_status, total_amount)
         VALUES (${user_id}, ${cart_id}, ${resolvedCouponId}, 'PENDING', ${totalAmount})
         RETURNING *
-      `,
-      sql`
+      ),
+      delivery AS (
         INSERT INTO Delivery_Address (order_id, address_id)
-        VALUES (currval(pg_get_serial_sequence('orders', 'order_id')), ${resolvedAddressId})
-      `,
-      ...cartItems.map((item) => sql`
-        WITH updated AS (
-          UPDATE Product_Variation
-          SET stock_quantity = stock_quantity - ${item.quantity}
-          WHERE product_variation_id = ${item.product_variation_id}
-            AND stock_quantity >= ${item.quantity}
-          RETURNING product_variation_id
-        )
-        SELECT CASE
-          WHEN EXISTS (SELECT 1 FROM updated) THEN 1
-          ELSE (1/0)
-        END AS stock_ok
-      `),
-      sql`
-        DELETE FROM Contains
-        WHERE cart_id = ${cart_id}
-      `,
-    ];
+        SELECT order_id, ${resolvedAddressId}
+        FROM new_order
+      )
+      SELECT *
+      FROM new_order
+    `;
 
-    const txResults = await sql.transaction(txQueries);
-    const newOrder = txResults[0];
+    const newOrder = newOrderRows[0];
 
     res.status(201).json({
       success: true,
-      data: { ...newOrder[0], delivery_address_id: resolvedAddressId, total_amount: totalAmount },
+      data: { ...newOrder, delivery_address_id: resolvedAddressId, total_amount: totalAmount },
     });
   } catch (error) {
-    if (String(error?.message || '').includes('division by zero')) {
-      return res.status(409).json({
-        success: false,
-        message: 'Stock changed while placing order. Please refresh cart and try again.',
-      });
-    }
-
     console.error("Error in createOrder:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
@@ -278,6 +256,78 @@ export const updateOrderStatus = async (req, res) => {
   }
 
   try {
+    if (order_status === 'CONFIRMED') {
+      const orderRows = await sql`
+        SELECT order_id, cart_id, order_status
+        FROM Orders
+        WHERE order_id = ${id}
+        LIMIT 1
+      `;
+
+      if (orderRows.length === 0) {
+        return res.status(404).json({ success: false, message: "Order not found" });
+      }
+
+      const order = orderRows[0];
+
+      console.log('Confirming order:', id, 'cart:', order.cart_id, 'current status:', order.order_status);
+
+      if (order.order_status === 'CONFIRMED') {
+        const existing = await sql`
+          SELECT *
+          FROM Orders
+          WHERE order_id = ${id}
+          LIMIT 1
+        `;
+        return res.status(200).json({ success: true, data: existing[0] });
+      }
+
+      const cartItems = await sql`
+        SELECT ct.product_variation_id, ct.quantity
+        FROM Contains ct
+        WHERE ct.cart_id = ${order.cart_id}
+      `;
+
+      console.log('Cart has', cartItems.length, 'items');
+
+      for (const item of cartItems) {
+        const stockResult = await sql`
+          UPDATE Product_Variation
+          SET stock_quantity = stock_quantity - ${item.quantity}
+          WHERE product_variation_id = ${item.product_variation_id}
+            AND stock_quantity >= ${item.quantity}
+          RETURNING product_variation_id, stock_quantity
+        `;
+
+        if (stockResult.length === 0) {
+          console.log('Stock error for variation', item.product_variation_id);
+          return res.status(409).json({
+            success: false,
+            message: `Insufficient stock for product variation ${item.product_variation_id}. Please refresh and try again.`,
+          });
+        }
+
+        console.log('Updated variation', item.product_variation_id, 'new stock:', stockResult[0].stock_quantity);
+      }
+
+      console.log('Clearing cart', order.cart_id);
+      await sql`
+        DELETE FROM Contains
+        WHERE cart_id = ${order.cart_id}
+      `;
+
+      console.log('Marking order', id, 'as CONFIRMED');
+      const updatedOrder = await sql`
+        UPDATE Orders
+        SET order_status = 'CONFIRMED'
+        WHERE order_id = ${id}
+        RETURNING *
+      `;
+
+      console.log('Order confirmed:', updatedOrder[0]);
+      return res.status(200).json({ success: true, data: updatedOrder[0] });
+    }
+
     const updated = await sql`
       UPDATE Orders
       SET order_status = ${order_status}
@@ -291,6 +341,13 @@ export const updateOrderStatus = async (req, res) => {
 
     res.status(200).json({ success: true, data: updated[0] });
   } catch (error) {
+    if (String(error?.message || '').includes('division by zero')) {
+      return res.status(409).json({
+        success: false,
+        message: 'Stock changed while confirming order. Please refresh cart and try again.',
+      });
+    }
+
     console.error("Error in updateOrderStatus:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }

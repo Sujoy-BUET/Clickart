@@ -68,7 +68,7 @@ export default function ProductCard({ product }) {
 
         <div className="mt-auto flex items-center justify-between pt-3 border-t border-gray-800">
           <span className="text-lg font-bold text-violet-400">
-            ₹{Number(price).toLocaleString('en-IN')}
+            ৳{Number(price).toLocaleString('en-BD')}
           </span>
           <Link
             to={`/products/${product_id}`}

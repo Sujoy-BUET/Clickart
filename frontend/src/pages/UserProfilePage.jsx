@@ -13,7 +13,16 @@ function UserProfilePage() {
     user_name: '',
     password: '',
     emails: [''],
-    phones: ['']
+    phones: [''],
+    addresses: [{
+      house_no: '',
+      road_no: '',
+      postal_code: '',
+      area: '',
+      district: '',
+      division: '',
+      country: 'Bangladesh'
+    }]
   });
 
   useEffect(() => {
@@ -30,7 +39,16 @@ function UserProfilePage() {
         user_name: profileData.user_name || '',
         password: '',
         emails: profileData.emails && profileData.emails.length > 0 ? profileData.emails : [''],
-        phones: profileData.phones && profileData.phones.length > 0 ? profileData.phones : ['']
+        phones: profileData.phones && profileData.phones.length > 0 ? profileData.phones : [''],
+        addresses: profileData.addresses && profileData.addresses.length > 0 ? profileData.addresses : [{
+          house_no: '',
+          road_no: '',
+          postal_code: '',
+          area: '',
+          district: '',
+          division: '',
+          country: 'Bangladesh'
+        }]
       });
       setLoading(false);
     } catch (error) {
@@ -93,6 +111,39 @@ function UserProfilePage() {
     }
   };
 
+  const handleAddressChange = (index, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      addresses: prev.addresses.map((addr, i) => 
+        i === index ? { ...addr, [field]: value } : addr
+      )
+    }));
+  };
+
+  const addAddressField = () => {
+    setFormData(prev => ({
+      ...prev,
+      addresses: [...prev.addresses, {
+        house_no: '',
+        road_no: '',
+        postal_code: '',
+        area: '',
+        district: '',
+        division: '',
+        country: 'Bangladesh'
+      }]
+    }));
+  };
+
+  const removeAddressField = (index) => {
+    if (formData.addresses.length > 1) {
+      setFormData(prev => ({
+        ...prev,
+        addresses: prev.addresses.filter((_, i) => i !== index)
+      }));
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -100,7 +151,8 @@ function UserProfilePage() {
       const updateData = {
         user_name: formData.user_name,
         emails: formData.emails.filter(email => email.trim() !== ''),
-        phones: formData.phones.filter(phone => phone.trim() !== '')
+        phones: formData.phones.filter(phone => phone.trim() !== ''),
+        addresses: formData.addresses.filter(addr => addr.postal_code.trim() !== '')
       };
       
       if (formData.password.trim()) {
@@ -232,13 +284,15 @@ function UserProfilePage() {
               {profile.addresses && profile.addresses.length > 0 ? (
                 <div className="space-y-3">
                   {profile.addresses.map((addr, index) => (
-                    <div key={index} className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
-                      <p className="text-gray-100">
-                        {addr.house_no} {addr.road_no}, {addr.area}
-                      </p>
-                      <p className="text-gray-300 text-sm">
-                        {addr.district}, {addr.division}, {addr.country} - {addr.postal_code}
-                      </p>
+                    <div key={index} className="rounded-lg border border-gray-700 bg-gray-800/50 p-3 flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="text-gray-100">
+                          {addr.house_no} {addr.road_no}, {addr.area}
+                        </p>
+                        <p className="text-gray-300 text-sm">
+                          {addr.district}, {addr.division}, {addr.country} - {addr.postal_code}
+                        </p>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -377,6 +431,94 @@ function UserProfilePage() {
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Address Section */}
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-violet-400" />
+                  <h3 className="text-lg font-semibold text-gray-100">Delivery Addresses</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={addAddressField}
+                  className="flex items-center gap-1 rounded-lg bg-violet-600/20 px-3 py-1.5 text-sm font-medium text-violet-400 hover:bg-violet-600/30 transition"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Address
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                {formData.addresses.map((address, index) => (
+                  <div key={index} className="rounded-lg border border-gray-700 bg-gray-800/30 p-4 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input
+                        type="text"
+                        value={address.house_no || ''}
+                        onChange={(e) => handleAddressChange(index, 'house_no', e.target.value)}
+                        placeholder="House No"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      <input
+                        type="text"
+                        value={address.road_no || ''}
+                        onChange={(e) => handleAddressChange(index, 'road_no', e.target.value)}
+                        placeholder="Road No"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      <input
+                        type="text"
+                        required
+                        value={address.postal_code || ''}
+                        onChange={(e) => handleAddressChange(index, 'postal_code', e.target.value)}
+                        placeholder="Postal Code (required)"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      <input
+                        type="text"
+                        value={address.area || ''}
+                        onChange={(e) => handleAddressChange(index, 'area', e.target.value)}
+                        placeholder="Area"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      <input
+                        type="text"
+                        value={address.district || ''}
+                        onChange={(e) => handleAddressChange(index, 'district', e.target.value)}
+                        placeholder="District"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      <input
+                        type="text"
+                        value={address.division || ''}
+                        onChange={(e) => handleAddressChange(index, 'division', e.target.value)}
+                        placeholder="Division"
+                        className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <input
+                        type="text"
+                        value={address.country || 'Bangladesh'}
+                        onChange={(e) => handleAddressChange(index, 'country', e.target.value)}
+                        placeholder="Country"
+                        className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 placeholder-gray-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition"
+                      />
+                      {formData.addresses.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeAddressField(index)}
+                          className="flex items-center justify-center w-10 h-10 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 transition"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

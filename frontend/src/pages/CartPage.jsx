@@ -51,6 +51,12 @@ export default function CartPage() {
 
     if (newQty < 1) return handleRemove(item.product_variation_id);
 
+    const stockQty = Number(item.stock_quantity || 0);
+    if (newQty > stockQty) {
+      setCartMsg(`Only ${stockQty} item(s) available for ${item.product_name}.`);
+      return;
+    }
+
     try {
       const res = await setCartItemQuantity({
         cart_id: Number(cartId),
@@ -112,7 +118,8 @@ export default function CartPage() {
                       {item.variation_type}: {item.variation_value}
                     </p>
                   )}
-                  <p className="mt-1 text-sm font-bold text-violet-400">₹{Number(item.price || 0).toLocaleString('en-IN')}</p>
+                  <p className="mt-0.5 text-xs text-gray-500">Stock: {Number(item.stock_quantity || 0)}</p>
+                  <p className="mt-1 text-sm font-bold text-violet-400">৳{Number(item.price || 0).toLocaleString('en-BD')}</p>
                 </div>
 
                 {/* Qty */}
@@ -126,7 +133,8 @@ export default function CartPage() {
                   <span className="w-7 text-center text-xs font-medium">{item.quantity}</span>
                   <button
                     onClick={() => handleQty(item, Number(item.quantity) + 1)}
-                    className="px-2.5 py-1.5 text-gray-400 hover:text-white transition"
+                    disabled={Number(item.quantity || 0) >= Number(item.stock_quantity || 0)}
+                    className="px-2.5 py-1.5 text-gray-400 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -134,7 +142,7 @@ export default function CartPage() {
 
                 {/* Subtotal */}
                 <span className="hidden sm:block w-24 text-right text-sm font-semibold text-gray-200">
-                  ₹{(Number(item.price || 0) * Number(item.quantity || 1)).toLocaleString('en-IN')}
+                  ৳{(Number(item.price || 0) * Number(item.quantity || 1)).toLocaleString('en-BD')}
                 </span>
 
                 {/* Remove */}
@@ -149,7 +157,7 @@ export default function CartPage() {
           <div className="mt-8 rounded-xl border border-gray-800 bg-gray-900 p-6">
             <div className="flex items-center justify-between mb-4">
               <span className="text-sm text-gray-400">Subtotal ({items.length} items)</span>
-              <span className="text-xl font-bold text-violet-400">₹{total.toLocaleString('en-IN')}</span>
+              <span className="text-xl font-bold text-violet-400">৳{total.toLocaleString('en-BD')}</span>
             </div>
             <Link
               to={`/checkout/${userId}`}

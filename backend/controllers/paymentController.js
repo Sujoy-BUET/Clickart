@@ -64,6 +64,33 @@ export const createPayment = async (req, res) => {
   }
 
   try {
+    const order = await sql`
+      SELECT order_id
+      FROM Orders
+      WHERE order_id = ${order_id}
+      LIMIT 1
+    `;
+
+    if (order.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const existing = await sql`
+      SELECT *
+      FROM Payment
+      WHERE order_id = ${order_id}
+      ORDER BY payment_id DESC
+      LIMIT 1
+    `;
+
+    if (existing.length > 0) {
+      return res.status(200).json({
+        success: true,
+        message: "Payment already initialized for this order",
+        data: existing[0],
+      });
+    }
+
     const newPayment = await sql`
       INSERT INTO payment (order_id, payment_method, payment_status)
       VALUES (${order_id}, ${payment_method}, 'PENDING')

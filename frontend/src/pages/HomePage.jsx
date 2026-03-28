@@ -7,7 +7,7 @@ import ProductCard from '../components/ProductCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 const features = [
-  { icon: Truck, title: 'Free Shipping', desc: 'On orders above ₹499' },
+  { icon: Truck, title: 'Free Shipping', desc: 'On orders above ৳499' },
   { icon: ShieldCheck, title: 'Secure Payments', desc: '256-bit SSL encryption' },
   { icon: CreditCard, title: 'Easy Returns', desc: '7-day return policy' },
   { icon: Headphones, title: '24/7 Support', desc: 'Dedicated help centre' },

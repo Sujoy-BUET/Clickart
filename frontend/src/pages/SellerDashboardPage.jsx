@@ -462,7 +462,7 @@ export default function SellerDashboardPage() {
                     <p className="text-xs text-gray-500">{p.brand_name} · {p.category_name}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-violet-400">₹{Number(p.price).toLocaleString('en-IN')}</span>
+                    <span className="text-sm font-bold text-violet-400">৳{Number(p.price).toLocaleString('en-BD')}</span>
                     {isOwnDashboard && (
                       <div className="flex gap-1">
                         <button onClick={() => openEditProductForm(p)} className="p-1 text-gray-400 hover:text-blue-400 transition">

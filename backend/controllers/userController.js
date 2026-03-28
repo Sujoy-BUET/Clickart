@@ -223,7 +223,7 @@ export const getUserProfile = async (req, res) => {
 // Update user profile
 export const updateUserProfile = async (req, res) => {
   const { id } = req.params;
-  const { user_name, password, emails, phones } = req.body;
+  const { user_name, password, emails, phones, addresses } = req.body;
 
   try {
     // Update basic user info
@@ -273,8 +273,51 @@ export const updateUserProfile = async (req, res) => {
       }
     }
 
+    // Update addresses if provided
+    if (addresses && Array.isArray(addresses)) {
+      // Get current user addresses
+      const currentAddresses = await sql`
+        SELECT ua.address_id
+        FROM User_Address ua
+        WHERE ua.user_id = ${id}
+      `;
+
+      // Remove old address associations
+      await sql`DELETE FROM User_Address WHERE user_id = ${id}`;
+
+      // Delete addresses that were only associated with this user
+      for (const addr of currentAddresses) {
+        const otherUsers = await sql`
+          SELECT COUNT(*)::INT as count
+          FROM User_Address
+          WHERE address_id = ${addr.address_id}
+        `;
+        
+        if (otherUsers[0].count === 0) {
+          await sql`DELETE FROM Address WHERE address_id = ${addr.address_id}`;
+        }
+      }
+
+      // Add new addresses
+      for (const addr of addresses) {
+        if (addr.postal_code && addr.postal_code.trim()) {
+          const newAddr = await sql`
+            INSERT INTO Address (house_no, road_no, postal_code, area, district, division, country)
+            VALUES (${addr.house_no ?? null}, ${addr.road_no ?? null}, ${addr.postal_code}, ${addr.area ?? null}, ${addr.district ?? null}, ${addr.division ?? null}, ${addr.country ?? 'Bangladesh'})
+            RETURNING address_id
+          `;
+
+          await sql`
+            INSERT INTO User_Address (user_id, address_id)
+            VALUES (${id}, ${newAddr[0].address_id})
+          `;
+        }
+      }
+    }
+
     res.status(200).json({ success: true, data: updatedUser[0] });
   } catch (error) {
+    console.error('Error in updateUserProfile:', error);
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };

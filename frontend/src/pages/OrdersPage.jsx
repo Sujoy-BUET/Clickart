@@ -68,7 +68,7 @@ export default function OrdersPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-gray-500">Total</p>
-                  <p className="font-bold text-violet-400">₹{Number(order.total_amount || 0).toLocaleString('en-IN')}</p>
+                  <p className="font-bold text-violet-400">৳{Number(order.total_amount || 0).toLocaleString('en-BD')}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Date</p>
