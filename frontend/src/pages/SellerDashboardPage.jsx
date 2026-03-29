@@ -30,7 +30,10 @@ export default function SellerDashboardPage() {
     stock_quantity: '',
     product_image: '',
     category_id: '',
+    category_name: '',
+    useCustomCategory: false,
     brand_id: '',
+    variations: [],
   });
 
   // Determine which seller to show
@@ -75,7 +78,10 @@ export default function SellerDashboardPage() {
       stock_quantity: '',
       product_image: '',
       category_id: '',
+      category_name: '',
+      useCustomCategory: false,
       brand_id: '',
+      variations: [],
     });
   };
 
@@ -98,7 +104,10 @@ export default function SellerDashboardPage() {
       stock_quantity: product.stock_quantity ?? '',
       product_image: product.product_image || '',
       category_id: product.category_id ?? '',
+      category_name: '',
+      useCustomCategory: false,
       brand_id: product.brand_id ?? '',
+      variations: [],
     });
     setShowProductForm(true);
   };
@@ -124,8 +133,18 @@ export default function SellerDashboardPage() {
       return;
     }
 
-    if (!productForm.category_id || !productForm.brand_id) {
-      setActionError('Please select both category and brand.');
+    if (!productForm.brand_id) {
+      setActionError('Please select brand.');
+      return;
+    }
+
+    if (!productForm.useCustomCategory && !productForm.category_id) {
+      setActionError('Please select a category.');
+      return;
+    }
+
+    if (productForm.useCustomCategory && !String(productForm.category_name).trim()) {
+      setActionError('Please enter a custom category name.');
       return;
     }
 
@@ -133,13 +152,29 @@ export default function SellerDashboardPage() {
       product_name: String(productForm.product_name).trim(),
       description: String(productForm.description).trim() || null,
       price: Number(productForm.price),
-      stock_quantity: Number(productForm.stock_quantity),
+      stock_quantity: productForm.stock_quantity === '' ? 0 : Number(productForm.stock_quantity),
       product_image: String(productForm.product_image).trim() || null,
-      category_id: Number(productForm.category_id),
       brand_id: Number(productForm.brand_id),
     };
 
-    if (!payload.product_name || Number.isNaN(payload.price) || Number.isNaN(payload.stock_quantity)) {
+    if (productForm.useCustomCategory) {
+      payload.category_name = String(productForm.category_name).trim();
+    } else {
+      payload.category_id = Number(productForm.category_id);
+    }
+
+    if (Array.isArray(productForm.variations) && productForm.variations.length > 0) {
+      payload.variations = productForm.variations
+        .filter((variation) => String(variation.variation_type || '').trim() && String(variation.variation_value || '').trim())
+        .map((variation) => ({
+          variation_type: String(variation.variation_type).trim(),
+          variation_value: String(variation.variation_value).trim(),
+          price: variation.price === '' ? undefined : Number(variation.price),
+          stock_quantity: variation.stock_quantity === '' ? undefined : Number(variation.stock_quantity),
+        }));
+    }
+
+    if (!payload.product_name || Number.isNaN(payload.price) || Number.isNaN(payload.stock_quantity) || payload.stock_quantity < 0) {
       setActionError('Please provide valid product name, price, and stock.');
       return;
     }
@@ -372,13 +407,12 @@ export default function SellerDashboardPage() {
                   className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
                 />
                 <input
-                  required
                   type="number"
                   min="0"
                   step="1"
                   value={productForm.stock_quantity}
                   onChange={(e) => handleProductFormChange('stock_quantity', e.target.value)}
-                  placeholder="Stock quantity"
+                  placeholder="Stock quantity (optional)"
                   className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
                 />
                 <input
@@ -387,19 +421,29 @@ export default function SellerDashboardPage() {
                   placeholder="Image URL (optional)"
                   className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
                 />
-                <select
-                  required
-                  value={productForm.category_id}
-                  onChange={(e) => handleProductFormChange('category_id', e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
-                >
-                  <option value="">Select category</option>
-                  {categoryOptions.map((option) => (
-                    <option key={option.category_id} value={option.category_id}>
-                      {option.category_name}
-                    </option>
-                  ))}
-                </select>
+                {productForm.useCustomCategory ? (
+                  <input
+                    required
+                    value={productForm.category_name}
+                    onChange={(e) => handleProductFormChange('category_name', e.target.value)}
+                    placeholder="Custom category (e.g. Kitchen Tools)"
+                    className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                  />
+                ) : (
+                  <select
+                    required
+                    value={productForm.category_id}
+                    onChange={(e) => handleProductFormChange('category_id', e.target.value)}
+                    className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                  >
+                    <option value="">Select category</option>
+                    {categoryOptions.map((option) => (
+                      <option key={option.category_id} value={option.category_id}>
+                        {option.category_name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select
                   required
                   value={productForm.brand_id}
@@ -415,6 +459,24 @@ export default function SellerDashboardPage() {
                 </select>
               </div>
 
+              <label className="mt-1 inline-flex items-center gap-2 text-xs text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={productForm.useCustomCategory}
+                  onChange={(e) => {
+                    const useCustomCategory = e.target.checked;
+                    setProductForm((prev) => ({
+                      ...prev,
+                      useCustomCategory,
+                      category_id: useCustomCategory ? '' : prev.category_id,
+                      category_name: useCustomCategory ? prev.category_name : '',
+                    }));
+                  }}
+                  className="h-3.5 w-3.5 rounded border-gray-600 bg-gray-800"
+                />
+                Type custom category
+              </label>
+
               <textarea
                 value={productForm.description}
                 onChange={(e) => handleProductFormChange('description', e.target.value)}
@@ -422,6 +484,88 @@ export default function SellerDashboardPage() {
                 rows={3}
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
               />
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-gray-200">Variations (optional)</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProductForm((prev) => ({
+                        ...prev,
+                        variations: [
+                          ...prev.variations,
+                          { variation_type: '', variation_value: '', price: '', stock_quantity: '' },
+                        ],
+                      }));
+                    }}
+                    className="rounded-md border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800"
+                  >
+                    Add variation
+                  </button>
+                </div>
+
+                {productForm.variations.map((variation, index) => (
+                  <div key={`variation-${index}`} className="grid grid-cols-1 gap-2 sm:grid-cols-5">
+                    <input
+                      value={variation.variation_type}
+                      onChange={(e) => {
+                        const next = [...productForm.variations];
+                        next[index] = { ...next[index], variation_type: e.target.value };
+                        handleProductFormChange('variations', next);
+                      }}
+                      placeholder="Type (Color, Size)"
+                      className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                    />
+                    <input
+                      value={variation.variation_value}
+                      onChange={(e) => {
+                        const next = [...productForm.variations];
+                        next[index] = { ...next[index], variation_value: e.target.value };
+                        handleProductFormChange('variations', next);
+                      }}
+                      placeholder="Value (Red, XL)"
+                      className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={variation.price}
+                      onChange={(e) => {
+                        const next = [...productForm.variations];
+                        next[index] = { ...next[index], price: e.target.value };
+                        handleProductFormChange('variations', next);
+                      }}
+                      placeholder="Price"
+                      className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={variation.stock_quantity}
+                      onChange={(e) => {
+                        const next = [...productForm.variations];
+                        next[index] = { ...next[index], stock_quantity: e.target.value };
+                        handleProductFormChange('variations', next);
+                      }}
+                      placeholder="Stock"
+                      className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = productForm.variations.filter((_, itemIndex) => itemIndex !== index);
+                        handleProductFormChange('variations', next);
+                      }}
+                      className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
 
               <button
                 type="submit"
