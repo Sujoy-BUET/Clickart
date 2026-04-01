@@ -25,7 +25,11 @@ export default function ProductDetailPage() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const hasVariations = (product?.variations?.length ?? 0) > 0;
+  const baseStock = Number(product?.stock_quantity ?? 0);
   const selectedStock = Number(selectedVariation?.stock_quantity ?? 0);
+  const effectiveStock = hasVariations ? selectedStock : baseStock;
+  const canAddToCart = effectiveStock > 0 && (hasVariations ? !!selectedVariation : !!product?.product_id);
 
   useEffect(() => {
     setLoading(true);
@@ -40,29 +44,38 @@ export default function ProductDetailPage() {
   }, [id]);
 
   const handleAddToCart = async () => {
-    if (!selectedVariation) return;
-
     if (!isCustomer()) {
       setCartMsg('Please login as a user to add items to cart.');
       return;
     }
 
-    if (selectedStock <= 0) {
-      setCartMsg('This variation is out of stock.');
+    if (hasVariations && !selectedVariation) {
+      setCartMsg('Please select a variation first.');
       return;
     }
 
-    if (qty > selectedStock) {
-      setCartMsg(`Only ${selectedStock} item(s) available in stock.`);
+    if (effectiveStock <= 0) {
+      setCartMsg(hasVariations ? 'This variation is out of stock.' : 'This product is out of stock.');
+      return;
+    }
+
+    if (qty > effectiveStock) {
+      setCartMsg(`Only ${effectiveStock} item(s) available in stock.`);
       return;
     }
 
     try {
       const cart = await getOrCreateCartByUser(user.user_id);
-      const res = await addToCart({
+      const payload = {
         cart_id: cart.cart_id,
-        product_variation_id: selectedVariation.product_variation_id,
         quantity: qty,
+        ...(selectedVariation
+          ? { product_variation_id: selectedVariation.product_variation_id }
+          : { product_id: product.product_id }),
+      };
+
+      const res = await addToCart({
+        ...payload,
       });
 
       if (!res?.success) {
@@ -117,12 +130,12 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     if (!selectedVariation) return;
-    if (selectedStock <= 0) {
+    if (effectiveStock <= 0) {
       setQty(1);
       return;
     }
-    setQty((prev) => Math.min(Math.max(1, prev), selectedStock));
-  }, [selectedVariation, selectedStock]);
+    setQty((prev) => Math.min(Math.max(1, prev), effectiveStock));
+  }, [selectedVariation, effectiveStock]);
 
   const handleImageError = () => {
     if (currentImage !== DEFAULT_IMAGE) {
@@ -209,8 +222,8 @@ export default function ProductDetailPage() {
               </button>
               <span className="w-8 text-center text-sm font-medium">{qty}</span>
               <button
-                onClick={() => setQty((q) => (selectedStock > 0 ? Math.min(q + 1, selectedStock) : q))}
-                disabled={selectedStock <= 0 || qty >= selectedStock}
+                onClick={() => setQty((q) => (effectiveStock > 0 ? Math.min(q + 1, effectiveStock) : q))}
+                disabled={effectiveStock <= 0 || qty >= effectiveStock}
                 className="px-3 py-2 text-gray-400 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="h-4 w-4" />
@@ -220,18 +233,16 @@ export default function ProductDetailPage() {
 
           <button
             onClick={handleAddToCart}
-            disabled={selectedStock <= 0}
+            disabled={!canAddToCart}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white hover:bg-violet-500 transition shadow-lg shadow-violet-600/20"
           >
-            <ShoppingCart className="h-4 w-4" /> {selectedStock <= 0 ? 'Out of Stock' : 'Add to Cart'}
+            <ShoppingCart className="h-4 w-4" /> {effectiveStock <= 0 ? 'Out of Stock' : 'Add to Cart'}
           </button>
           {cartMsg && <p className="text-center text-sm text-emerald-400">{cartMsg}</p>}
 
-          {selectedVariation && (
-            <p className="text-xs text-gray-600">
-              Stock: {selectedVariation.stock_quantity ?? '∞'} available
-            </p>
-          )}
+          <p className="text-xs text-gray-600">
+            Stock: {effectiveStock} available
+          </p>
         </div>
       </div>
 
@@ -285,7 +296,9 @@ export default function ProductDetailPage() {
                   <span className="text-xs text-gray-600">{r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</span>
                 </div>
                 <p className="text-sm text-gray-300">{r.comment}</p>
-                {r.first_name && <p className="mt-2 text-xs text-gray-500">— {r.first_name} {r.last_name ?? ''}</p>}
+                {(r.reviewer_name || r.reviewer_user_id) && (
+                  <p className="mt-2 text-xs text-gray-500">— {r.reviewer_name || `User #${r.reviewer_user_id}`}</p>
+                )}
               </div>
             ))}
           </div>

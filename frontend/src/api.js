@@ -1,10 +1,42 @@
 const BASE = '/api';
 
-function request(url, options = {}) {
-  return fetch(`${BASE}${url}`, {
+async function request(url, options = {}) {
+  const res = await fetch(`${BASE}${url}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
-  }).then(res => res.json());
+  });
+
+  const raw = await res.text();
+
+  if (!raw || !raw.trim()) {
+    if (res.ok) {
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      message: `Request failed (${res.status})`,
+      status: res.status,
+    };
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    if (res.ok) {
+      return {
+        success: false,
+        message: 'Server returned an invalid response format.',
+        status: res.status,
+      };
+    }
+
+    return {
+      success: false,
+      message: raw.trim() || `Request failed (${res.status})`,
+      status: res.status,
+    };
+  }
 }
 
 /* ── Products ── */

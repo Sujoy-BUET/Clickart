@@ -6,6 +6,15 @@ import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+const DEFAULT_PRODUCT_IMAGE = '/default-product.svg';
+
+const resolveProductImage = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return DEFAULT_PRODUCT_IMAGE;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) return raw;
+  return `/${raw}`;
+};
+
 export default function SellerDashboardPage() {
   const { sellerId } = useParams();
   const navigate = useNavigate();
@@ -596,8 +605,17 @@ export default function SellerDashboardPage() {
                   key={p.product_id}
                   className="flex items-center gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 transition hover:border-gray-700"
                 >
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-gray-800 text-lg font-bold text-gray-600">
-                    {p.product_name?.[0]}
+                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-gray-800">
+                    <img
+                      src={resolveProductImage(p.product_image)}
+                      alt={p.product_name || 'Product image'}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
+                      }}
+                    />
                   </div>
                   <div className="flex-1 min-w-0">
                     <Link to={`/products/${p.product_id}`} className="text-sm font-semibold text-gray-100 hover:text-violet-400 transition truncate block">
@@ -636,10 +654,12 @@ export default function SellerDashboardPage() {
                 <div key={r.review_id ?? i} className="rounded-xl border border-gray-800 bg-gray-900 p-5">
                   <div className="flex items-center justify-between mb-2">
                     <StarRating rating={r.rating} size={14} />
-                    <span className="text-xs text-gray-600">{r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</span>
+                    <span className="text-xs text-gray-600">{r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</span>
                   </div>
                   <p className="text-sm text-gray-300">{r.comment}</p>
-                  {r.first_name && <p className="mt-2 text-xs text-gray-500">— {r.first_name} {r.last_name ?? ''}</p>}
+                  {(r.reviewer_name || r.reviewer_user_id) && (
+                    <p className="mt-2 text-xs text-gray-500">— {r.reviewer_name || `User #${r.reviewer_user_id}`}</p>
+                  )}
                 </div>
               ))}
             </div>

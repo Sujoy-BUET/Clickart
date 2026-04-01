@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { Package, Clock, CheckCircle, Truck, XCircle } from 'lucide-react';
 import { getUserOrders } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import { useAuth } from '../context/AuthContext';
 
 const statusConfig = {
   pending:    { icon: Clock,       color: 'text-amber-400',   bg: 'bg-amber-400/10' },
@@ -26,17 +27,38 @@ function StatusBadge({ status }) {
 
 export default function OrdersPage() {
   const { userId } = useParams();
+  const { user, isCustomer } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const routeUserId = Number(userId || 0);
+  const authUserId = Number(user?.user_id || 0);
+  const effectiveUserId = useMemo(() => authUserId || routeUserId, [authUserId, routeUserId]);
+  const hasOwnershipMismatch = Boolean(authUserId && routeUserId && authUserId !== routeUserId);
+
   useEffect(() => {
-    getUserOrders(userId)
+    if (!effectiveUserId || !isCustomer() || hasOwnershipMismatch) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    getUserOrders(effectiveUserId)
       .then((d) => setOrders(Array.isArray(d) ? d : []))
       .catch(() => setOrders([]))
       .finally(() => setLoading(false));
-  }, [userId]);
+  }, [effectiveUserId, hasOwnershipMismatch, isCustomer]);
 
   if (loading) return <LoadingSpinner />;
+
+  if (!isCustomer()) {
+    return <div className="py-24 text-center text-gray-500">Please login as a customer to view orders.</div>;
+  }
+
+  if (hasOwnershipMismatch) {
+    return <div className="py-24 text-center text-gray-500">You cannot view another user's orders.</div>;
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -85,6 +107,47 @@ export default function OrdersPage() {
                     <p className="text-xs text-gray-500">Delivery</p>
                     <p className="text-gray-300">{order.city}</p>
                   </div>
+                )}
+              </div>
+
+              <div className="mt-4 border-t border-gray-800 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Items</p>
+
+                {Array.isArray(order.items) && order.items.length > 0 ? (
+                  <div className="space-y-2">
+                    {order.items.map((item, itemIdx) => (
+                      <div
+                        key={item.order_item_id ?? `${order.order_id}-${item.product_variation_id}-${itemIdx}`}
+                        className="flex items-center justify-between gap-3 rounded-lg bg-gray-800/60 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          {item.product_id ? (
+                            <Link
+                              to={`/products/${item.product_id}`}
+                              className="block truncate text-sm font-medium text-gray-200 hover:text-violet-300"
+                            >
+                              {item.product_name}
+                            </Link>
+                          ) : (
+                            <p className="truncate text-sm font-medium text-gray-200">{item.product_name}</p>
+                          )}
+                          {(item.variation_type || item.variation_value) && (
+                            <p className="text-xs text-gray-400">
+                              {item.variation_type || 'Variation'}: {item.variation_value || '-'}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right text-sm">
+                          <p className="text-gray-300">x{Number(item.quantity || 0)}</p>
+                          <p className="font-semibold text-violet-300">
+                            ৳{Number(item.unit_price || 0).toLocaleString('en-BD')}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">Items are not available for this order.</p>
                 )}
               </div>
             </div>

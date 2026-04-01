@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { UserPlus, Eye, EyeOff, Mail, Phone, MapPin } from 'lucide-react';
 import { createUser, addUserAddress } from '../api';
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export default function RegisterPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ 
@@ -43,23 +45,42 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    const normalizedUserName = String(form.user_name || '').trim();
+    const normalizedEmail = String(form.email || '').trim();
+
+    if (!normalizedUserName) {
+      setError('Username is required.');
+      return;
+    }
+
+    if (!EMAIL_REGEX.test(normalizedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     setLoading(true);
     
     try {
       // Create user with basic info, email, and phone
       const newUser = await createUser({
-        user_name: form.user_name,
+        user_name: normalizedUserName,
         password: form.password,
-        email: form.email || undefined,
+        email: normalizedEmail || undefined,
         phone_number: form.phone_number || undefined
       });
+
+      if (!newUser?.success || !newUser?.data) {
+        setError(newUser?.message || 'Registration failed. Please try again.');
+        return;
+      }
       
       const userData = newUser.data;
       
       // Add address if provided
       if (form.address.postal_code && form.address.area && form.address.district && form.address.division) {
         try {
-          await addUserAddress(userData.user_id, {
+          const addressResp = await addUserAddress(userData.user_id, {
             house_no: form.address.house_no || null,
             road_no: form.address.road_no || null,
             postal_code: form.address.postal_code,
@@ -68,6 +89,10 @@ export default function RegisterPage() {
             division: form.address.division,
             country: form.address.country
           });
+
+          if (!addressResp?.success) {
+            setError(addressResp?.message || 'Account created but address could not be saved. You can add it later.');
+          }
         } catch (addressError) {
           console.warn('Address creation failed:', addressError.message);
           setError('Account created but address could not be saved. You can add it later.');

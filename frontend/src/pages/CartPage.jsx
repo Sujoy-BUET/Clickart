@@ -4,17 +4,31 @@ import { Trash2, ShoppingBag, Minus, Plus, ArrowRight } from 'lucide-react';
 import { getCart, getOrCreateCartByUser, removeFromCart, setCartItemQuantity } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import { useAuth } from '../context/AuthContext';
 
 export default function CartPage() {
   const { userId } = useParams();
+  const { user, isCustomer } = useAuth();
   const [items, setItems] = useState([]);
   const [cartId, setCartId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cartMsg, setCartMsg] = useState('');
 
+  const routeUserId = Number(userId || 0);
+  const authUserId = Number(user?.user_id || 0);
+  const effectiveUserId = authUserId || routeUserId;
+  const hasOwnershipMismatch = Boolean(authUserId && routeUserId && authUserId !== routeUserId);
+
   const fetchCart = () => {
+    if (!isCustomer() || !effectiveUserId || hasOwnershipMismatch) {
+      setItems([]);
+      setCartId(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    getOrCreateCartByUser(userId)
+    getOrCreateCartByUser(effectiveUserId)
       .then((cart) => {
         setCartId(cart?.cart_id ?? null);
         if (!cart?.cart_id) {
@@ -31,7 +45,7 @@ export default function CartPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(fetchCart, [userId]);
+  useEffect(fetchCart, [effectiveUserId, hasOwnershipMismatch, isCustomer]);
 
   const handleRemove = async (product_variation_id) => {
     if (!cartId) return;
@@ -77,6 +91,14 @@ export default function CartPage() {
   const total = items.reduce((s, i) => s + Number(i.price || 0) * Number(i.quantity || 1), 0);
 
   if (loading) return <LoadingSpinner />;
+
+  if (!isCustomer()) {
+    return <div className="py-24 text-center text-gray-500">Please login as a customer to view cart.</div>;
+  }
+
+  if (hasOwnershipMismatch) {
+    return <div className="py-24 text-center text-gray-500">You cannot access another user's cart.</div>;
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -160,7 +182,7 @@ export default function CartPage() {
               <span className="text-xl font-bold text-violet-400">৳{total.toLocaleString('en-BD')}</span>
             </div>
             <Link
-              to={`/checkout/${userId}`}
+              to={`/checkout/${effectiveUserId}`}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3.5 text-sm font-semibold text-white hover:bg-violet-500 transition shadow-lg shadow-violet-600/20"
             >
               Proceed to Checkout <ArrowRight className="h-4 w-4" />

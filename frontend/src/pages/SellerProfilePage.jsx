@@ -5,12 +5,23 @@ import { getSellerProfile, updateSellerProfile } from '../api';
 import { Store, User, Mail, Phone, ShieldCheck, Edit3, Save, X, Plus, Trash2 } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+const mapProfileToForm = (profileData) => ({
+  seller_name: profileData?.seller_name || '',
+  seller_password: '',
+  store_name: profileData?.store_name || '',
+  store_description: profileData?.store_description || '',
+  emails: Array.isArray(profileData?.emails) && profileData.emails.length > 0 ? profileData.emails : [''],
+  phones: Array.isArray(profileData?.phones) && profileData.phones.length > 0 ? profileData.phones : [''],
+});
+
 function SellerProfilePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
   const [formData, setFormData] = useState({
     seller_name: '',
     seller_password: '',
@@ -35,18 +46,18 @@ function SellerProfilePage() {
     
     try {
       const profileData = await getSellerProfile(user.seller_id);
+
+      if (!profileData?.seller_id) {
+        throw new Error('Failed to load seller profile');
+      }
+
       setProfile(profileData);
-      setFormData({
-        seller_name: profileData.seller_name || '',
-        seller_password: '',
-        store_name: profileData.store_name || '',
-        store_description: profileData.store_description || '',
-        emails: profileData.emails && profileData.emails.length > 0 ? profileData.emails : [''],
-        phones: profileData.phones && profileData.phones.length > 0 ? profileData.phones : ['']
-      });
+      setFormData(mapProfileToForm(profileData));
+      setFormError('');
       setLoading(false);
     } catch (error) {
       console.error('Error loading profile:', error);
+      setFormError('Failed to load seller profile. Please refresh and try again.');
       setLoading(false);
     }
   };
@@ -107,26 +118,48 @@ function SellerProfilePage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setFormError('');
+    setFormSuccess('');
+
+    const normalizedSellerName = String(formData.seller_name || '').trim();
+    const normalizedStoreName = String(formData.store_name || '').trim();
+
+    if (!normalizedSellerName || !normalizedStoreName) {
+      setFormError('Seller name and store name are required.');
+      return;
+    }
+
+    const normalizedEmails = formData.emails
+      .map((email) => String(email || '').trim())
+      .filter((email) => email.length > 0);
+    const normalizedPhones = formData.phones
+      .map((phone) => String(phone || '').trim())
+      .filter((phone) => phone.length > 0);
     
     try {
       const updateData = {
-        seller_name: formData.seller_name,
-        store_name: formData.store_name,
-        store_description: formData.store_description,
-        emails: formData.emails.filter(email => email.trim() !== ''),
-        phones: formData.phones.filter(phone => phone.trim() !== '')
+        seller_name: normalizedSellerName,
+        store_name: normalizedStoreName,
+        store_description: String(formData.store_description || '').trim() || null,
+        emails: normalizedEmails,
+        phones: normalizedPhones,
       };
 
       if (formData.seller_password.trim()) {
         updateData.seller_password = formData.seller_password;
       }
 
-      await updateSellerProfile(user.seller_id, updateData);
+      const response = await updateSellerProfile(user.seller_id, updateData);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to update seller profile.');
+      }
+
       setEditing(false);
       await loadProfile();
+      setFormSuccess('Seller profile updated successfully.');
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('Error updating profile. Please try again.');
+      setFormError(error?.message || 'Error updating profile. Please try again.');
     }
   };
 
@@ -159,6 +192,16 @@ function SellerProfilePage() {
               <p className="text-gray-400">Manage your store and account information</p>
             </div>
           </div>
+          {formError && !editing && (
+            <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300">
+              {formError}
+            </div>
+          )}
+          {formSuccess && !editing && (
+            <div className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-300">
+              {formSuccess}
+            </div>
+          )}
         </div>
 
         {!editing ? (
@@ -290,7 +333,11 @@ function SellerProfilePage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditing(false)}
+                  onClick={() => {
+                    setEditing(false);
+                    setFormError('');
+                    setFormData(mapProfileToForm(profile));
+                  }}
                   className="flex items-center gap-2 rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 transition"
                 >
                   <X className="h-4 w-4" />
@@ -305,6 +352,12 @@ function SellerProfilePage() {
                 </button>
               </div>
             </div>
+
+            {formError && (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300">
+                {formError}
+              </div>
+            )}
 
             {/* Store Form */}
             <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">

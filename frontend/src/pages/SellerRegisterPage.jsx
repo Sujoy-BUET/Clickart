@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Store, Eye, EyeOff, Mail, Phone, MapPin, FileText } from 'lucide-react';
 import { createSeller, addSellerEmail, addSellerPhone, addSellerAddress } from '../api';
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export default function SellerRegisterPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ 
@@ -45,41 +47,62 @@ export default function SellerRegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    const normalizedSellerName = String(form.seller_name || '').trim();
+    const normalizedStoreName = String(form.store_name || '').trim();
+    const normalizedEmail = String(form.email || '').trim();
+    const normalizedPhone = String(form.phone_number || '').trim();
+
+    if (!normalizedSellerName || !normalizedStoreName) {
+      setError('Seller name and store name are required.');
+      return;
+    }
+
+    if (normalizedEmail && !EMAIL_REGEX.test(normalizedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     setLoading(true);
     
     try {
       // Create seller with basic info
       const newSeller = await createSeller({
-        seller_name: form.seller_name,
+        seller_name: normalizedSellerName,
         seller_password: form.seller_password,
-        store_name: form.store_name,
+        store_name: normalizedStoreName,
         store_description: form.store_description || null
       });
+
+      if (!newSeller?.success || !newSeller?.data) {
+        setError(newSeller?.message || 'Registration failed. Please try again.');
+        return;
+      }
       
       const sellerData = newSeller.data;
       
       // Add email if provided
-      if (form.email) {
-        try {
-          await addSellerEmail(sellerData.seller_id, { email: form.email });
-        } catch (emailError) {
-          console.warn('Email creation failed:', emailError.message);
+      if (normalizedEmail) {
+        const emailResp = await addSellerEmail(sellerData.seller_id, { email: normalizedEmail });
+        if (!emailResp?.success) {
+          setError(emailResp?.message || 'Seller account created but email could not be saved.');
+          return;
         }
       }
       
       // Add phone if provided
-      if (form.phone_number) {
-        try {
-          await addSellerPhone(sellerData.seller_id, { phone_number: form.phone_number });
-        } catch (phoneError) {
-          console.warn('Phone creation failed:', phoneError.message);
+      if (normalizedPhone) {
+        const phoneResp = await addSellerPhone(sellerData.seller_id, { phone_number: normalizedPhone });
+        if (!phoneResp?.success) {
+          setError(phoneResp?.message || 'Seller account created but phone could not be saved.');
+          return;
         }
       }
       
       // Add address if provided
       if (form.address.postal_code && form.address.area && form.address.district && form.address.division) {
         try {
-          await addSellerAddress(sellerData.seller_id, {
+          const addressResp = await addSellerAddress(sellerData.seller_id, {
             house_no: form.address.house_no || null,
             road_no: form.address.road_no || null,
             postal_code: form.address.postal_code,
@@ -88,6 +111,10 @@ export default function SellerRegisterPage() {
             division: form.address.division,
             country: form.address.country
           });
+
+          if (!addressResp?.success) {
+            setError(addressResp?.message || 'Seller account created but address could not be saved.');
+          }
         } catch (addressError) {
           console.warn('Address creation failed:', addressError.message);
         }

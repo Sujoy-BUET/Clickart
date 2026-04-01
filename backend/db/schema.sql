@@ -5,6 +5,7 @@ DROP TABLE IF EXISTS Review_Seller     CASCADE;
 DROP TABLE IF EXISTS Review_Product    CASCADE;
 DROP TABLE IF EXISTS Review            CASCADE;
 DROP TABLE IF EXISTS Payment           CASCADE;
+DROP TABLE IF EXISTS Order_Item        CASCADE;
 DROP TABLE IF EXISTS Delivery_Address  CASCADE;
 DROP TABLE IF EXISTS Orders            CASCADE;
 DROP TABLE IF EXISTS Coupon            CASCADE;
@@ -214,6 +215,20 @@ CREATE TABLE IF NOT EXISTS Orders (
     FOREIGN KEY (user_id) REFERENCES Users(user_id),
     FOREIGN KEY (cart_id) REFERENCES Cart(cart_id),
     FOREIGN KEY (coupon_id) REFERENCES Coupon(coupon_id)
+);
+
+CREATE TABLE IF NOT EXISTS Order_Item (
+    order_item_id SERIAL PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_variation_id INT NOT NULL,
+    quantity INT NOT NULL,
+    unit_price NUMERIC(10,2) NOT NULL,
+    product_name VARCHAR(150) NOT NULL,
+    variation_type VARCHAR(50),
+    variation_value VARCHAR(50),
+    product_image VARCHAR(255),
+    FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_variation_id) REFERENCES Product_Variation(product_variation_id)
 );
 
 CREATE TABLE IF NOT EXISTS Delivery_Address (

@@ -1,5 +1,23 @@
 import { sql } from "../config/db.js";
 
+const ensureOrderItemTable = async () => {
+  await sql`
+    CREATE TABLE IF NOT EXISTS Order_Item (
+      order_item_id SERIAL PRIMARY KEY,
+      order_id INT NOT NULL,
+      product_variation_id INT NOT NULL,
+      quantity INT NOT NULL,
+      unit_price NUMERIC(10,2) NOT NULL,
+      product_name VARCHAR(150) NOT NULL,
+      variation_type VARCHAR(50),
+      variation_value VARCHAR(50),
+      product_image VARCHAR(255),
+      FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
+      FOREIGN KEY (product_variation_id) REFERENCES Product_Variation(product_variation_id)
+    )
+  `;
+};
+
 // Get all orders
 export const getOrders = async (req, res) => {
   try {
@@ -21,11 +39,57 @@ export const getOrder = async (req, res) => {
   const { id } = req.params;
 
   try {
+    await ensureOrderItemTable();
+
     const order = await sql`
       SELECT o.*,
              a.address_id, a.house_no, a.road_no, a.postal_code,
              a.area, a.district, a.division, a.country,
-             cp.code AS coupon_code, cp.discount_type, cp.discount_value
+             cp.code AS coupon_code, cp.discount_type, cp.discount_value,
+             COALESCE(
+               (
+                 SELECT json_agg(
+                   json_build_object(
+                     'order_item_id', oi.order_item_id,
+                     'product_id', pv.product_id,
+                     'product_variation_id', oi.product_variation_id,
+                     'quantity', oi.quantity,
+                     'unit_price', oi.unit_price,
+                     'product_name', oi.product_name,
+                     'variation_type', oi.variation_type,
+                     'variation_value', oi.variation_value,
+                     'product_image', oi.product_image
+                   )
+                   ORDER BY oi.order_item_id
+                 )
+                 FROM Order_Item oi
+                 JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+                 WHERE oi.order_id = o.order_id
+               ),
+               (
+                 SELECT json_agg(
+                   json_build_object(
+                     'order_item_id', null,
+                     'product_id', pv.product_id,
+                     'product_variation_id', ct.product_variation_id,
+                     'quantity', ct.quantity,
+                     'unit_price', COALESCE(pv.price, p.price),
+                     'product_name', p.product_name,
+                     'variation_type', vt.variation_type_name,
+                     'variation_value', v.variation_value,
+                     'product_image', p.product_image
+                   )
+                   ORDER BY ct.product_variation_id
+                 )
+                 FROM Contains ct
+                 JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
+                 JOIN Product p ON pv.product_id = p.product_id
+                 LEFT JOIN Variation v ON pv.variation_id = v.variation_id
+                 LEFT JOIN VariationType vt ON v.variation_type_id = vt.variation_type_id
+                 WHERE ct.cart_id = o.cart_id
+               ),
+               '[]'::json
+             ) AS items
       FROM Orders o
       LEFT JOIN Delivery_Address da ON o.order_id  = da.order_id
       LEFT JOIN Address a           ON da.address_id = a.address_id
@@ -49,11 +113,57 @@ export const getUserOrders = async (req, res) => {
   const { userId } = req.params;
 
   try {
+    await ensureOrderItemTable();
+
     const orders = await sql`
       SELECT o.*, o.order_status AS status,
              da.address_id AS delivery_address_id,
              a.area AS city,
-             cp.code AS coupon_code
+             cp.code AS coupon_code,
+             COALESCE(
+               (
+                 SELECT json_agg(
+                   json_build_object(
+                     'order_item_id', oi.order_item_id,
+                     'product_id', pv.product_id,
+                     'product_variation_id', oi.product_variation_id,
+                     'quantity', oi.quantity,
+                     'unit_price', oi.unit_price,
+                     'product_name', oi.product_name,
+                     'variation_type', oi.variation_type,
+                     'variation_value', oi.variation_value,
+                     'product_image', oi.product_image
+                   )
+                   ORDER BY oi.order_item_id
+                 )
+                 FROM Order_Item oi
+                 JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+                 WHERE oi.order_id = o.order_id
+               ),
+               (
+                 SELECT json_agg(
+                   json_build_object(
+                     'order_item_id', null,
+                     'product_id', pv.product_id,
+                     'product_variation_id', ct.product_variation_id,
+                     'quantity', ct.quantity,
+                     'unit_price', COALESCE(pv.price, p.price),
+                     'product_name', p.product_name,
+                     'variation_type', vt.variation_type_name,
+                     'variation_value', v.variation_value,
+                     'product_image', p.product_image
+                   )
+                   ORDER BY ct.product_variation_id
+                 )
+                 FROM Contains ct
+                 JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
+                 JOIN Product p ON pv.product_id = p.product_id
+                 LEFT JOIN Variation v ON pv.variation_id = v.variation_id
+                 LEFT JOIN VariationType vt ON v.variation_type_id = vt.variation_type_id
+                 WHERE ct.cart_id = o.cart_id
+               ),
+               '[]'::json
+             ) AS items
       FROM Orders o
       LEFT JOIN Delivery_Address da ON o.order_id = da.order_id
       LEFT JOIN Address a ON da.address_id = a.address_id
@@ -86,6 +196,8 @@ export const createOrder = async (req, res) => {
   }
 
   try {
+    await ensureOrderItemTable();
+
     const cart = await sql`
       SELECT cart_id, user_id
       FROM Cart
@@ -104,10 +216,16 @@ export const createOrder = async (req, res) => {
     const cartItems = await sql`
       SELECT ct.product_variation_id, ct.quantity,
              COALESCE(pv.price, p.price) AS item_price,
-             pv.stock_quantity
+             pv.stock_quantity,
+             p.product_name,
+             p.product_image,
+             vt.variation_type_name AS variation_type,
+             v.variation_value
       FROM Contains ct
       JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
       JOIN Product p ON pv.product_id = p.product_id
+      LEFT JOIN Variation v ON pv.variation_id = v.variation_id
+      LEFT JOIN VariationType vt ON v.variation_type_id = vt.variation_type_id
       WHERE ct.cart_id = ${cart_id}
     `;
 
@@ -231,9 +349,48 @@ export const createOrder = async (req, res) => {
 
     const newOrder = newOrderRows[0];
 
+    for (const item of cartItems) {
+      await sql`
+        INSERT INTO Order_Item (
+          order_id,
+          product_variation_id,
+          quantity,
+          unit_price,
+          product_name,
+          variation_type,
+          variation_value,
+          product_image
+        )
+        VALUES (
+          ${newOrder.order_id},
+          ${item.product_variation_id},
+          ${item.quantity},
+          ${item.item_price},
+          ${item.product_name},
+          ${item.variation_type ?? null},
+          ${item.variation_value ?? null},
+          ${item.product_image ?? null}
+        )
+      `;
+    }
+
+    const createdItems = await sql`
+      SELECT oi.order_item_id, pv.product_id, oi.product_variation_id, oi.quantity, oi.unit_price,
+             product_name, variation_type, variation_value, product_image
+      FROM Order_Item oi
+      JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      WHERE oi.order_id = ${newOrder.order_id}
+      ORDER BY oi.order_item_id ASC
+    `;
+
     res.status(201).json({
       success: true,
-      data: { ...newOrder, delivery_address_id: resolvedAddressId, total_amount: totalAmount },
+      data: {
+        ...newOrder,
+        delivery_address_id: resolvedAddressId,
+        total_amount: totalAmount,
+        items: createdItems,
+      },
     });
   } catch (error) {
     console.error("Error in createOrder:", error);

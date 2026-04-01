@@ -95,21 +95,63 @@ export const getProducts = async (req, res) => {
 
     if (category) {
       products = await sql`
-        SELECT p.*, b.brand_name, c.category_name, s.store_name
+        SELECT p.*, b.brand_name, c.category_name, s.store_name,
+               COALESCE(rs.review_count, 0) AS review_count,
+               COALESCE(rs.average_rating, 0) AS average_rating,
+               CASE 
+                 WHEN COALESCE(vs.has_variation, false) THEN COALESCE(vs.has_stock, false)
+                 ELSE p.stock_quantity > 0
+               END AS in_stock
         FROM product p
         JOIN brand b    ON p.brand_id    = b.brand_id
         JOIN category c ON p.category_id = c.category_id
         JOIN sellers s  ON p.seller_id   = s.seller_id
+        LEFT JOIN (
+          SELECT rp.product_id,
+                 COUNT(*)::INT AS review_count,
+                 ROUND(AVG(r.rating)::numeric, 1) AS average_rating
+          FROM review r
+          JOIN review_product rp ON rp.review_id = r.review_id
+          GROUP BY rp.product_id
+        ) rs ON rs.product_id = p.product_id
+        LEFT JOIN (
+          SELECT pv.product_id,
+                 true as has_variation,
+                 BOOL_OR(pv.stock_quantity > 0) AS has_stock
+          FROM Product_Variation pv
+          GROUP BY pv.product_id
+        ) vs ON vs.product_id = p.product_id
         WHERE c.category_name ILIKE ${category} OR c.category_id::text = ${category}
         ORDER BY p.product_id DESC
       `;
     } else {
       products = await sql`
-        SELECT p.*, b.brand_name, c.category_name, s.store_name
+        SELECT p.*, b.brand_name, c.category_name, s.store_name,
+               COALESCE(rs.review_count, 0) AS review_count,
+               COALESCE(rs.average_rating, 0) AS average_rating,
+               CASE 
+                 WHEN COALESCE(vs.has_variation, false) THEN COALESCE(vs.has_stock, false)
+                 ELSE p.stock_quantity > 0
+               END AS in_stock
         FROM product p
         JOIN brand b    ON p.brand_id    = b.brand_id
         JOIN category c ON p.category_id = c.category_id
         JOIN sellers s  ON p.seller_id   = s.seller_id
+        LEFT JOIN (
+          SELECT rp.product_id,
+                 COUNT(*)::INT AS review_count,
+                 ROUND(AVG(r.rating)::numeric, 1) AS average_rating
+          FROM review r
+          JOIN review_product rp ON rp.review_id = r.review_id
+          GROUP BY rp.product_id
+        ) rs ON rs.product_id = p.product_id
+        LEFT JOIN (
+          SELECT pv.product_id,
+                 true as has_variation,
+                 BOOL_OR(pv.stock_quantity > 0) AS has_stock
+          FROM Product_Variation pv
+          GROUP BY pv.product_id
+        ) vs ON vs.product_id = p.product_id
         ORDER BY p.product_id DESC
       `;
     }
@@ -141,11 +183,22 @@ export const getProduct = async (req, res) => {
 
   try {
     const product = await sql`
-      SELECT p.*, b.brand_name, c.category_name, s.store_name
+      SELECT p.*, b.brand_name, c.category_name, s.store_name,
+             CASE 
+               WHEN COALESCE(vs.has_variation, false) THEN COALESCE(vs.has_stock, false)
+               ELSE p.stock_quantity > 0
+             END AS in_stock
       FROM product p
       JOIN brand b    ON p.brand_id    = b.brand_id
       JOIN category c ON p.category_id = c.category_id
       JOIN sellers s  ON p.seller_id   = s.seller_id
+      LEFT JOIN (
+        SELECT pv.product_id,
+               true as has_variation,
+               BOOL_OR(pv.stock_quantity > 0) AS has_stock
+        FROM Product_Variation pv
+        GROUP BY pv.product_id
+      ) vs ON vs.product_id = p.product_id
       WHERE p.product_id = ${id}
     `;
 
@@ -160,6 +213,7 @@ export const getProduct = async (req, res) => {
       JOIN Variation v      ON pv.variation_id      = v.variation_id
       JOIN VariationType vt ON v.variation_type_id   = vt.variation_type_id
       WHERE pv.product_id = ${id}
+      ORDER BY pv.product_variation_id ASC
     `;
 
     res.status(200).json({ success: true, data: { ...product[0], variations } });

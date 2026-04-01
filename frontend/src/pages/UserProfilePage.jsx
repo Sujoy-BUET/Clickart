@@ -4,25 +4,39 @@ import { getUserProfile, updateUserProfile } from '../api';
 import { User, Mail, Phone, MapPin, Edit3, Save, X, Plus, Trash2 } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+const EMPTY_ADDRESS = {
+  house_no: '',
+  road_no: '',
+  postal_code: '',
+  area: '',
+  district: '',
+  division: '',
+  country: 'Bangladesh',
+};
+
+const mapProfileToForm = (profileData) => ({
+  user_name: profileData?.user_name || '',
+  password: '',
+  emails: Array.isArray(profileData?.emails) && profileData.emails.length > 0 ? profileData.emails : [''],
+  phones: Array.isArray(profileData?.phones) && profileData.phones.length > 0 ? profileData.phones : [''],
+  addresses: Array.isArray(profileData?.addresses) && profileData.addresses.length > 0
+    ? profileData.addresses
+    : [{ ...EMPTY_ADDRESS }],
+});
+
 function UserProfilePage() {
   const { user } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
   const [formData, setFormData] = useState({
     user_name: '',
     password: '',
     emails: [''],
     phones: [''],
-    addresses: [{
-      house_no: '',
-      road_no: '',
-      postal_code: '',
-      area: '',
-      district: '',
-      division: '',
-      country: 'Bangladesh'
-    }]
+    addresses: [{ ...EMPTY_ADDRESS }]
   });
 
   useEffect(() => {
@@ -34,25 +48,18 @@ function UserProfilePage() {
     
     try {
       const profileData = await getUserProfile(user.user_id);
+
+      if (!profileData?.user_id) {
+        throw new Error('Failed to load profile');
+      }
+
       setProfile(profileData);
-      setFormData({
-        user_name: profileData.user_name || '',
-        password: '',
-        emails: profileData.emails && profileData.emails.length > 0 ? profileData.emails : [''],
-        phones: profileData.phones && profileData.phones.length > 0 ? profileData.phones : [''],
-        addresses: profileData.addresses && profileData.addresses.length > 0 ? profileData.addresses : [{
-          house_no: '',
-          road_no: '',
-          postal_code: '',
-          area: '',
-          district: '',
-          division: '',
-          country: 'Bangladesh'
-        }]
-      });
+      setFormData(mapProfileToForm(profileData));
+      setFormError('');
       setLoading(false);
     } catch (error) {
       console.error('Error loading profile:', error);
+      setFormError('Failed to load profile data. Please refresh and try again.');
       setLoading(false);
     }
   };
@@ -123,15 +130,7 @@ function UserProfilePage() {
   const addAddressField = () => {
     setFormData(prev => ({
       ...prev,
-      addresses: [...prev.addresses, {
-        house_no: '',
-        road_no: '',
-        postal_code: '',
-        area: '',
-        district: '',
-        division: '',
-        country: 'Bangladesh'
-      }]
+      addresses: [...prev.addresses, { ...EMPTY_ADDRESS }]
     }));
   };
 
@@ -146,25 +145,56 @@ function UserProfilePage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setFormError('');
+    setFormSuccess('');
+
+    const normalizedUserName = String(formData.user_name || '').trim();
+    if (!normalizedUserName) {
+      setFormError('Username is required.');
+      return;
+    }
+
+    const normalizedEmails = formData.emails
+      .map((email) => String(email || '').trim())
+      .filter((email) => email.length > 0);
+    const normalizedPhones = formData.phones
+      .map((phone) => String(phone || '').trim())
+      .filter((phone) => phone.length > 0);
+    const normalizedAddresses = formData.addresses
+      .map((addr) => ({
+        house_no: String(addr.house_no || '').trim() || null,
+        road_no: String(addr.road_no || '').trim() || null,
+        postal_code: String(addr.postal_code || '').trim(),
+        area: String(addr.area || '').trim() || null,
+        district: String(addr.district || '').trim() || null,
+        division: String(addr.division || '').trim() || null,
+        country: String(addr.country || 'Bangladesh').trim() || 'Bangladesh',
+      }))
+      .filter((addr) => addr.postal_code.length > 0);
     
     try {
       const updateData = {
-        user_name: formData.user_name,
-        emails: formData.emails.filter(email => email.trim() !== ''),
-        phones: formData.phones.filter(phone => phone.trim() !== ''),
-        addresses: formData.addresses.filter(addr => addr.postal_code.trim() !== '')
+        user_name: normalizedUserName,
+        emails: normalizedEmails,
+        phones: normalizedPhones,
+        addresses: normalizedAddresses,
       };
       
       if (formData.password.trim()) {
         updateData.password = formData.password;
       }
 
-      await updateUserProfile(user.user_id, updateData);
+      const response = await updateUserProfile(user.user_id, updateData);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to update profile.');
+      }
+
       setEditing(false);
       await loadProfile();
+      setFormSuccess('Profile updated successfully.');
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('Error updating profile. Please try again.');
+      setFormError(error?.message || 'Error updating profile. Please try again.');
     }
   };
 
@@ -197,6 +227,16 @@ function UserProfilePage() {
               <p className="text-gray-400">Manage your account information</p>
             </div>
           </div>
+          {formError && !editing && (
+            <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300">
+              {formError}
+            </div>
+          )}
+          {formSuccess && !editing && (
+            <div className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-300">
+              {formSuccess}
+            </div>
+          )}
         </div>
       
         {!editing ? (
@@ -311,7 +351,11 @@ function UserProfilePage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditing(false)}
+                  onClick={() => {
+                    setEditing(false);
+                    setFormError('');
+                    setFormData(mapProfileToForm(profile));
+                  }}
                   className="flex items-center gap-2 rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 transition"
                 >
                   <X className="h-4 w-4" />
@@ -326,6 +370,12 @@ function UserProfilePage() {
                 </button>
               </div>
             </div>
+
+            {formError && (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-300">
+                {formError}
+              </div>
+            )}
 
             {/* Profile Form */}
             <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6">
@@ -473,7 +523,6 @@ function UserProfilePage() {
                       />
                       <input
                         type="text"
-                        required
                         value={address.postal_code || ''}
                         onChange={(e) => handleAddressChange(index, 'postal_code', e.target.value)}
                         placeholder="Postal Code (required)"

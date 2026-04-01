@@ -23,9 +23,12 @@ const paymentChoices = [
 export default function CheckoutPage() {
   const { userId: userIdParam } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isCustomer } = useAuth();
 
-  const userId = Number(userIdParam || user?.user_id || 0);
+  const routeUserId = Number(userIdParam || 0);
+  const authUserId = Number(user?.user_id || 0);
+  const userId = authUserId || routeUserId;
+  const hasOwnershipMismatch = Boolean(authUserId && routeUserId && authUserId !== routeUserId);
 
   const [cartId, setCartId] = useState(null);
   const [items, setItems] = useState([]);
@@ -108,7 +111,7 @@ export default function CheckoutPage() {
   };
 
   useEffect(() => {
-    if (!userId) {
+    if (!userId || !isCustomer() || hasOwnershipMismatch) {
       setLoading(false);
       setItems([]);
       return;
@@ -144,7 +147,7 @@ export default function CheckoutPage() {
         setSavedAddresses([]);
       })
       .finally(() => setLoading(false));
-  }, [userId]);
+  }, [hasOwnershipMismatch, isCustomer, userId]);
 
   const total = useMemo(
     () => items.reduce((s, i) => s + Number(i.price || 0) * Number(i.quantity || 1), 0),
@@ -307,8 +310,12 @@ export default function CheckoutPage() {
 
   if (loading) return <LoadingSpinner />;
 
-  if (!userId) {
+  if (!isCustomer()) {
     return <div className="py-24 text-center text-gray-500">Please login first to continue checkout.</div>;
+  }
+
+  if (hasOwnershipMismatch) {
+    return <div className="py-24 text-center text-gray-500">You cannot checkout another user's cart.</div>;
   }
 
   if (success) {

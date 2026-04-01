@@ -99,10 +99,10 @@ export const createCart = async (req, res) => {
 
 // Add product variation to cart
 export const addToCart = async (req, res) => {
-  const { cart_id, product_variation_id, quantity } = req.body;
+  const { cart_id, product_variation_id, product_id, quantity } = req.body;
 
-  if (!cart_id || !product_variation_id || !quantity) {
-    return res.status(400).json({ success: false, message: "cart_id, product_variation_id, and quantity are required" });
+  if (!cart_id || !quantity || (!product_variation_id && !product_id)) {
+    return res.status(400).json({ success: false, message: "cart_id, quantity, and either product_variation_id or product_id are required" });
   }
 
   const qty = Number(quantity);
@@ -111,10 +111,65 @@ export const addToCart = async (req, res) => {
   }
 
   try {
+    let resolvedVariationId = product_variation_id ? Number(product_variation_id) : null;
+
+    if (!resolvedVariationId && product_id) {
+      const existingVariation = await sql`
+        SELECT product_variation_id
+        FROM Product_Variation
+        WHERE product_id = ${product_id}
+        ORDER BY product_variation_id ASC
+        LIMIT 1
+      `;
+
+      if (existingVariation.length > 0) {
+        resolvedVariationId = Number(existingVariation[0].product_variation_id);
+      } else {
+        const baseProduct = await sql`
+          SELECT product_id, price, stock_quantity
+          FROM Product
+          WHERE product_id = ${product_id}
+          LIMIT 1
+        `;
+
+        if (baseProduct.length === 0) {
+          return res.status(404).json({ success: false, message: "Product not found" });
+        }
+
+        const defaultType = await sql`
+          INSERT INTO VariationType (variation_type_name)
+          VALUES ('Default')
+          ON CONFLICT (variation_type_name)
+          DO UPDATE SET variation_type_name = EXCLUDED.variation_type_name
+          RETURNING variation_type_id
+        `;
+
+        const defaultValue = await sql`
+          INSERT INTO Variation (variation_type_id, variation_value)
+          VALUES (${defaultType[0].variation_type_id}, 'Default')
+          ON CONFLICT (variation_type_id, variation_value)
+          DO UPDATE SET variation_value = EXCLUDED.variation_value
+          RETURNING variation_id
+        `;
+
+        const createdVariation = await sql`
+          INSERT INTO Product_Variation (product_id, variation_id, price, stock_quantity)
+          VALUES (${baseProduct[0].product_id}, ${defaultValue[0].variation_id}, ${baseProduct[0].price}, ${baseProduct[0].stock_quantity})
+          ON CONFLICT (product_id, variation_id)
+          DO UPDATE SET
+            price = EXCLUDED.price,
+            stock_quantity = EXCLUDED.stock_quantity
+          RETURNING product_variation_id
+        `;
+
+        resolvedVariationId = Number(createdVariation[0].product_variation_id);
+      }
+    }
+
     const variation = await sql`
       SELECT stock_quantity
       FROM Product_Variation
-      WHERE product_variation_id = ${product_variation_id}
+      WHERE product_variation_id = ${resolvedVariationId}
     `;
 
     if (variation.length === 0) {
@@ -124,7 +179,7 @@ export const addToCart = async (req, res) => {
     const existing = await sql`
       SELECT quantity
       FROM Contains
-      WHERE cart_id = ${cart_id} AND product_variation_id = ${product_variation_id}
+      WHERE cart_id = ${cart_id} AND product_variation_id = ${resolvedVariationId}
     `;
 
     const currentQty = Number(existing[0]?.quantity || 0);
@@ -140,7 +195,7 @@ export const addToCart = async (req, res) => {
 
     const cartItem = await sql`
       INSERT INTO Contains (cart_id, product_variation_id, quantity)
-      VALUES (${cart_id}, ${product_variation_id}, ${qty})
+      VALUES (${cart_id}, ${resolvedVariationId}, ${qty})
       ON CONFLICT (cart_id, product_variation_id)
       DO UPDATE SET quantity = Contains.quantity + ${qty}
       RETURNING *
