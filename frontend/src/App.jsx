@@ -15,6 +15,8 @@ import SellerRegisterPage from './pages/SellerRegisterPage';
 import SellerDashboardPage from './pages/SellerDashboardPage';
 import UserProfilePage from './pages/UserProfilePage';
 import SellerProfilePage from './pages/SellerProfilePage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
 
 function App() {
   return (
@@ -31,6 +33,8 @@ function App() {
             <Route path="/checkout/:userId" element={<CheckoutPage />} />
             <Route path="/orders/user/:userId" element={<OrdersPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/admin/login" element={<AdminLoginPage />} />
+            <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/profile" element={<UserProfilePage />} />
             <Route path="/sellers" element={<SellersPage />} />

@@ -9,7 +9,6 @@ import {
   createOrder,
   createPayment,
   updatePaymentStatus,
-  updateOrderStatus,
   setCartItemQuantity,
 } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -182,13 +181,21 @@ export default function CheckoutPage() {
       return;
     }
 
+    const hasSavedAddresses = savedAddresses.length > 0;
+    const normalizedPostalCode = String(newAddress.postal_code || '').trim();
+
     if (addressMode === 'saved' && !selectedAddressId) {
       setError('Please select a saved delivery address.');
       return;
     }
 
-    if (addressMode === 'new' && !newAddress.postal_code.trim()) {
+    if (addressMode === 'new' && !normalizedPostalCode) {
       setError('Postal code is required for a new delivery address.');
+      return;
+    }
+
+    if (addressMode === 'default' && !hasSavedAddresses) {
+      setError('No default address found. Please choose "New Address" and add your delivery details.');
       return;
     }
 
@@ -202,14 +209,19 @@ export default function CheckoutPage() {
       };
 
       if (addressMode === 'default') {
-        orderPayload.use_default_address = true;
+        if (hasSavedAddresses) {
+          // Prefer explicit saved address to avoid backend default-address lookup failures.
+          orderPayload.address_id = Number(savedAddresses[0].address_id);
+        } else {
+          orderPayload.use_default_address = true;
+        }
       } else if (addressMode === 'saved') {
         orderPayload.address_id = Number(selectedAddressId);
       } else {
         orderPayload.new_address = {
           house_no: newAddress.house_no || null,
           road_no: newAddress.road_no || null,
-          postal_code: newAddress.postal_code,
+          postal_code: normalizedPostalCode,
           area: newAddress.area || null,
           district: newAddress.district || null,
           division: newAddress.division || null,
@@ -281,10 +293,8 @@ export default function CheckoutPage() {
         throw new Error(payRes?.message || 'Failed to complete payment.');
       }
 
-      const orderRes = await updateOrderStatus(pendingPayment.order_id, { order_status: 'CONFIRMED' });
-      if (!orderRes?.success) {
-        throw new Error(orderRes?.message || 'Payment done but failed to update order status.');
-      }
+      // Keep order pending until all sellers confirm/reject.
+      await getOrder(pendingPayment.order_id).catch(() => null);
 
       setPendingPayment(null);
       setMobilePaymentInfo({ provider: '', account_number: '', transaction_id: '' });

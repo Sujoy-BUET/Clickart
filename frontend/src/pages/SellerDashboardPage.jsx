@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { createProduct, deleteProduct, getSeller, getSellerReviews, getProducts, updateProduct } from '../api';
+import { createProduct, deleteProduct, getSeller, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -22,12 +22,22 @@ export default function SellerDashboardPage() {
   const [seller, setSeller] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [products, setProducts] = useState([]);
+  const [salesSummary, setSalesSummary] = useState({
+    total_units_sold: 0,
+    total_sales_amount: 0,
+    total_orders: 0,
+    sales_history: [],
+    monthly_breakdown: [],
+  });
+  const [sellerOrders, setSellerOrders] = useState([]);
+  const [selectedMonthKey, setSelectedMonthKey] = useState('all');
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('products');
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [orderActionLoading, setOrderActionLoading] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
   const [showProductForm, setShowProductForm] = useState(false);
   const [categoryOptions, setCategoryOptions] = useState([]);
@@ -77,6 +87,11 @@ export default function SellerDashboardPage() {
     const allProducts = Array.isArray(all) ? all : [];
     setProducts(allProducts.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
     buildCategoryAndBrandOptions(allProducts);
+  }, [targetSellerId]);
+
+  const refreshSellerOrders = useCallback(async () => {
+    const orders = await getSellerOrders(targetSellerId).catch(() => []);
+    setSellerOrders(Array.isArray(orders) ? orders : []);
   }, [targetSellerId]);
 
   const resetProductForm = () => {
@@ -216,6 +231,35 @@ export default function SellerDashboardPage() {
     }
   };
 
+  const handleSellerOrderResponse = async (orderId, approvalStatus) => {
+    if (!isOwnDashboard) {
+      setActionError('You can only act on orders from your own dashboard.');
+      return;
+    }
+
+    setActionError('');
+    setActionSuccess('');
+    setOrderActionLoading(true);
+    try {
+      const response = await sellerRespondToOrder(orderId, {
+        seller_id: Number(targetSellerId),
+        approval_status: approvalStatus,
+      });
+
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to update seller order response.');
+        return;
+      }
+
+      setActionSuccess(`Order #${orderId} ${approvalStatus === 'CONFIRMED' ? 'confirmed' : 'rejected'} successfully.`);
+      await refreshSellerOrders();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to update seller order response.');
+    } finally {
+      setOrderActionLoading(false);
+    }
+  };
+
   const handleDeleteProduct = async (productId) => {
     setActionError('');
     setActionSuccess('');
@@ -270,13 +314,25 @@ export default function SellerDashboardPage() {
       getSeller(targetSellerId),
       getSellerReviews(targetSellerId).catch(() => []),
       getProducts().catch(() => []),
+      getSellerSalesSummary(targetSellerId).catch(() => null),
+      getSellerOrders(targetSellerId).catch(() => []),
     ])
-      .then(([s, r, p]) => {
+      .then(([s, r, p, sales, sellerOrderRows]) => {
         setSeller(s.data || s);
         setReviews(Array.isArray(r) ? r : (Array.isArray(r?.data) ? r.data : []));
         const all = Array.isArray(p) ? p : [];
         setProducts(all.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
         buildCategoryAndBrandOptions(all);
+        setSellerOrders(Array.isArray(sellerOrderRows) ? sellerOrderRows : []);
+        if (sales) {
+          setSalesSummary({
+            total_units_sold: Number(sales.total_units_sold || 0),
+            total_sales_amount: Number(sales.total_sales_amount || 0),
+            total_orders: Number(sales.total_orders || 0),
+            sales_history: Array.isArray(sales.sales_history) ? sales.sales_history : [],
+            monthly_breakdown: Array.isArray(sales.monthly_breakdown) ? sales.monthly_breakdown : [],
+          });
+        }
       })
       .catch(() => {
         setError('Failed to load seller dashboard data.');
@@ -303,9 +359,24 @@ export default function SellerDashboardPage() {
 
   const tabs = [
     { key: 'products', label: 'Products', count: products.length },
+    { key: 'orders', label: 'Orders', count: sellerOrders.length },
+    { key: 'sales', label: 'Sales', count: salesSummary.sales_history.length },
     { key: 'reviews', label: 'Reviews', count: reviews.length },
     { key: 'info', label: 'Info' },
   ];
+
+  const monthlyOptions = Array.from(
+    new Map(
+      salesSummary.monthly_breakdown.map((row) => {
+        const key = `${row.year}-${String(row.month).padStart(2, '0')}`;
+        return [key, { key, label: row.month_year }];
+      })
+    ).values()
+  );
+
+  const filteredMonthlyRows = selectedMonthKey === 'all'
+    ? salesSummary.monthly_breakdown
+    : salesSummary.monthly_breakdown.filter((row) => `${row.year}-${String(row.month).padStart(2, '0')}` === selectedMonthKey);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
@@ -638,6 +709,187 @@ export default function SellerDashboardPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Reviews tab */}
+      {tab === 'sales' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400">Total Units Sold</p>
+              <p className="mt-2 text-2xl font-semibold text-emerald-300">{salesSummary.total_units_sold}</p>
+            </div>
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400">Total Sales Amount</p>
+              <p className="mt-2 text-2xl font-semibold text-violet-300">৳{Number(salesSummary.total_sales_amount || 0).toLocaleString('en-BD')}</p>
+            </div>
+            <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <p className="text-xs uppercase tracking-wide text-gray-400">Total Orders</p>
+              <p className="mt-2 text-2xl font-semibold text-amber-300">{salesSummary.total_orders}</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+            <h3 className="text-sm font-semibold text-gray-200 mb-4">Sales History (When and How Much Sold)</h3>
+            {salesSummary.sales_history.length === 0 ? (
+              <p className="text-sm text-gray-500">No sold items yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-left text-gray-400">
+                      <th className="px-2 py-2">Date & Time</th>
+                      <th className="px-2 py-2">Product</th>
+                      <th className="px-2 py-2">Qty</th>
+                      <th className="px-2 py-2">Unit Price</th>
+                      <th className="px-2 py-2">Line Total</th>
+                      <th className="px-2 py-2">Order</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesSummary.sales_history.map((row) => (
+                      <tr key={row.order_item_id} className="border-b border-gray-800/70 text-gray-300">
+                        <td className="px-2 py-2 whitespace-nowrap">{row.order_date ? new Date(row.order_date).toLocaleString() : '-'}</td>
+                        <td className="px-2 py-2">
+                          <div>{row.product_name}</div>
+                          {(row.variation_type || row.variation_value) && (
+                            <div className="text-xs text-gray-500">{row.variation_type}: {row.variation_value}</div>
+                          )}
+                        </td>
+                        <td className="px-2 py-2">{row.quantity}</td>
+                        <td className="px-2 py-2">৳{Number(row.unit_price || 0).toLocaleString('en-BD')}</td>
+                        <td className="px-2 py-2">৳{Number(row.line_total || 0).toLocaleString('en-BD')}</td>
+                        <td className="px-2 py-2">#{row.order_id}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-sm font-semibold text-gray-200">Products Sold by Month & Year</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400">Month, Year</label>
+                <select
+                  value={selectedMonthKey}
+                  onChange={(e) => setSelectedMonthKey(e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-gray-100 outline-none focus:border-violet-500"
+                >
+                  <option value="all">All months</option>
+                  {monthlyOptions.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {filteredMonthlyRows.length === 0 ? (
+              <p className="text-sm text-gray-500">No monthly sales records yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-left text-gray-400">
+                      <th className="px-2 py-2">Month, Year</th>
+                      <th className="px-2 py-2">Product</th>
+                      <th className="px-2 py-2">Units Sold</th>
+                      <th className="px-2 py-2">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMonthlyRows.map((row, idx) => (
+                      <tr key={`${row.year}-${row.month}-${row.product_id}-${idx}`} className="border-b border-gray-800/70 text-gray-300">
+                        <td className="px-2 py-2 whitespace-nowrap">{row.month_year}</td>
+                        <td className="px-2 py-2">{row.product_name}</td>
+                        <td className="px-2 py-2">{row.units_sold}</td>
+                        <td className="px-2 py-2">৳{Number(row.total_amount || 0).toLocaleString('en-BD')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Reviews tab */}
+      {tab === 'orders' && (
+        <div>
+          {actionSuccess && (
+            <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+              {actionSuccess}
+            </div>
+          )}
+
+          {actionError && (
+            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {actionError}
+            </div>
+          )}
+
+          {sellerOrders.length === 0 ? (
+            <p className="text-center text-sm text-gray-600 py-10">No seller orders yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {sellerOrders.map((order) => {
+                const sellerApproval = String(order.approval_status || 'PENDING').toUpperCase();
+                const canTakeAction = isOwnDashboard && sellerApproval === 'PENDING' && !['REJECTED', 'SUCCESSFUL', 'CANCELLED'].includes(String(order.order_status || '').toUpperCase());
+                return (
+                  <div key={order.order_id} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-gray-200">Order #{order.order_id}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-violet-300">Order: {order.order_status}</span>
+                        <span className={`rounded-full px-2.5 py-1 ${sellerApproval === 'CONFIRMED' ? 'bg-emerald-500/10 text-emerald-300' : sellerApproval === 'REJECTED' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                          Seller: {sellerApproval}
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="mt-2 text-xs text-gray-500">{order.order_date ? new Date(order.order_date).toLocaleString() : ''}</p>
+                    <p className="mt-2 text-sm text-gray-400">Your units: {Number(order.seller_units || 0)} | Amount: ৳{Number(order.seller_amount || 0).toLocaleString('en-BD')}</p>
+
+                    {Array.isArray(order.items) && order.items.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {order.items.map((item) => (
+                          <div key={item.order_item_id} className="rounded-lg bg-gray-800/60 px-3 py-2">
+                            <p className="text-sm font-medium text-gray-200">{item.product_name}</p>
+                            <p className="text-xs text-gray-400">Qty: {item.quantity} | Unit: ৳{Number(item.unit_price || 0).toLocaleString('en-BD')}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {canTakeAction && (
+                      <div className="mt-4 flex items-center gap-2">
+                        <button
+                          onClick={() => handleSellerOrderResponse(order.order_id, 'CONFIRMED')}
+                          disabled={orderActionLoading}
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => handleSellerOrderResponse(order.order_id, 'REJECTED')}
+                          disabled={orderActionLoading}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

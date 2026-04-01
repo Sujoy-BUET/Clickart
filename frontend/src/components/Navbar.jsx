@@ -6,11 +6,16 @@ import { useAuth } from '../context/AuthContext';
 export default function Navbar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAuthenticated, isSeller } = useAuth();
+  const { user, logout, isAuthenticated, isSeller, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const cartTo = user?.user_id ? `/cart/${user.user_id}` : '/login';
 
-  const links = isSeller() ? [
+  const links = isAdmin() ? [
+    { to: '/', label: 'Home', icon: Home },
+    { to: '/products', label: 'Products', icon: Package },
+    { to: '/sellers', label: 'Sellers', icon: Store },
+    { to: '/admin/dashboard', label: 'Admin Dashboard', icon: Store },
+  ] : isSeller() ? [
     { to: '/',         label: 'Home',      icon: Home },
     { to: '/products', label: 'Products',  icon: Package },
     { to: '/seller/dashboard', label: 'Dashboard', icon: Store },
@@ -54,7 +59,7 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
-          {!isSeller() && (
+          {!isSeller() && !isAdmin() && (
             <Link
               to={cartTo}
               className={`ml-1 flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
@@ -68,7 +73,7 @@ export default function Navbar() {
           {isAuthenticated() ? (
             <div className="ml-2 flex items-center gap-2">
               <span className="text-sm text-gray-300">
-                Hi, {isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
+                Hi, {isAdmin() ? user.admin_name || 'Admin' : isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
               </span>
               <button
                 onClick={handleLogout}
@@ -91,7 +96,7 @@ export default function Navbar() {
 
         {/* Mobile hamburger */}
         <div className="md:hidden flex items-center gap-1">
-          {!isSeller() && (
+          {!isSeller() && !isAdmin() && (
             <Link to={cartTo} className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200">
               <ShoppingCart className="h-5 w-5" />
             </Link>
@@ -120,7 +125,7 @@ export default function Navbar() {
           {isAuthenticated() ? (
             <div className="mt-2 space-y-2">
               <div className="px-3 py-2 text-sm text-gray-300">
-                Hi, {isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
+                Hi, {isAdmin() ? user.admin_name || 'Admin' : isSeller() ? user.store_name || `${user.first_name} ${user.last_name}` : user.user_name}
               </div>
               <button
                 onClick={handleLogout}

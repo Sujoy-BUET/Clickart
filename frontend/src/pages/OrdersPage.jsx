@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Package, Clock, CheckCircle, Truck, XCircle } from 'lucide-react';
-import { getUserOrders } from '../api';
+import { getUserOrders, markOrderReceived } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import { useAuth } from '../context/AuthContext';
@@ -11,6 +11,8 @@ const statusConfig = {
   processing: { icon: Truck,       color: 'text-blue-400',    bg: 'bg-blue-400/10' },
   shipped:    { icon: Truck,       color: 'text-cyan-400',    bg: 'bg-cyan-400/10' },
   delivered:  { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
+  successful: { icon: CheckCircle, color: 'text-lime-300',    bg: 'bg-lime-400/10' },
+  rejected:   { icon: XCircle,     color: 'text-rose-400',    bg: 'bg-rose-400/10' },
   cancelled:  { icon: XCircle,     color: 'text-red-400',     bg: 'bg-red-400/10' },
 };
 
@@ -30,6 +32,8 @@ export default function OrdersPage() {
   const { user, isCustomer } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoadingOrderId, setActionLoadingOrderId] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   const routeUserId = Number(userId || 0);
   const authUserId = Number(user?.user_id || 0);
@@ -50,6 +54,29 @@ export default function OrdersPage() {
       .finally(() => setLoading(false));
   }, [effectiveUserId, hasOwnershipMismatch, isCustomer]);
 
+  const refreshOrders = async () => {
+    const data = await getUserOrders(effectiveUserId).catch(() => []);
+    setOrders(Array.isArray(data) ? data : []);
+  };
+
+  const handleMarkReceived = async (orderId) => {
+    setActionError('');
+    setActionLoadingOrderId(orderId);
+    try {
+      const response = await markOrderReceived(orderId, { user_id: effectiveUserId });
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to mark order as received.');
+        return;
+      }
+
+      await refreshOrders();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to mark order as received.');
+    } finally {
+      setActionLoadingOrderId(null);
+    }
+  };
+
   if (loading) return <LoadingSpinner />;
 
   if (!isCustomer()) {
@@ -63,6 +90,12 @@ export default function OrdersPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
       <h1 className="text-3xl font-bold mb-8">My Orders</h1>
+
+      {actionError && (
+        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {actionError}
+        </div>
+      )}
 
       {orders.length === 0 ? (
         <EmptyState
@@ -86,6 +119,18 @@ export default function OrdersPage() {
                 </div>
                 <StatusBadge status={order.order_status || order.status} />
               </div>
+
+              {['CONFIRMED', 'SHIPPED', 'DELIVERED'].includes(String(order.order_status || '').toUpperCase()) && (
+                <div className="mb-4">
+                  <button
+                    onClick={() => handleMarkReceived(order.order_id)}
+                    disabled={actionLoadingOrderId === order.order_id}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    {actionLoadingOrderId === order.order_id ? 'Updating...' : 'Mark As Received'}
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                 <div>

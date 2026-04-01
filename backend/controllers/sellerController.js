@@ -158,7 +158,7 @@ export const createSeller = async (req, res) => {
 // Update seller
 export const updateSeller = async (req, res) => {
   const { id } = req.params;
-  const { seller_name, seller_password, store_name, store_description, is_verified } = req.body;
+  const { seller_name, seller_password, store_name, store_description } = req.body;
   const hasSellerName = seller_name !== undefined;
   const hasSellerPassword = seller_password !== undefined;
   const normalizedSellerName = hasSellerName ? normalizeSellerName(seller_name) : null;
@@ -192,8 +192,7 @@ export const updateSeller = async (req, res) => {
       SET seller_name      = COALESCE(${hasSellerName ? normalizedSellerName : null}, seller_name),
           seller_password   = COALESCE(${hasSellerPassword ? normalizedSellerPassword : null}, seller_password),
           store_name        = COALESCE(${store_name ?? null}, store_name),
-          store_description = COALESCE(${store_description ?? null}, store_description),
-          is_verified       = COALESCE(${is_verified ?? null}, is_verified)
+          store_description = COALESCE(${store_description ?? null}, store_description)
       WHERE seller_id = ${id}
       RETURNING seller_id, seller_name, store_name, store_description, is_verified
     `;
@@ -388,6 +387,99 @@ export const getSellerProfile = async (req, res) => {
     res.status(200).json({ success: true, data: sellerProfile });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+// Get seller sales analytics (overall, recent sales, and month/year breakdown)
+export const getSellerSalesSummary = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const sellerExists = await sql`
+      SELECT seller_id
+      FROM Sellers
+      WHERE seller_id = ${id}
+      LIMIT 1
+    `;
+
+    if (sellerExists.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    const totals = await sql`
+      SELECT
+        COALESCE(SUM(oi.quantity), 0)::INT AS total_units_sold,
+        COALESCE(SUM(oi.quantity * oi.unit_price), 0)::NUMERIC(12,2) AS total_sales_amount,
+        COALESCE(COUNT(DISTINCT o.order_id), 0)::INT AS total_orders
+      FROM Order_Item oi
+      JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      JOIN Product p ON pv.product_id = p.product_id
+      JOIN Orders o ON oi.order_id = o.order_id
+      WHERE p.seller_id = ${id}
+        AND o.order_status <> 'CANCELLED'
+    `;
+
+    const salesHistory = await sql`
+      SELECT
+        oi.order_item_id,
+        oi.order_id,
+        o.order_date,
+        o.order_status,
+        pv.product_id,
+        oi.product_name,
+        oi.quantity,
+        oi.unit_price,
+        (oi.quantity * oi.unit_price)::NUMERIC(12,2) AS line_total,
+        oi.variation_type,
+        oi.variation_value
+      FROM Order_Item oi
+      JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      JOIN Product p ON pv.product_id = p.product_id
+      JOIN Orders o ON oi.order_id = o.order_id
+      WHERE p.seller_id = ${id}
+        AND o.order_status <> 'CANCELLED'
+      ORDER BY o.order_date DESC, oi.order_item_id DESC
+      LIMIT 200
+    `;
+
+    const monthlyBreakdown = await sql`
+      SELECT
+        EXTRACT(YEAR FROM o.order_date)::INT AS year,
+        EXTRACT(MONTH FROM o.order_date)::INT AS month,
+        TO_CHAR(o.order_date, 'Mon YYYY') AS month_year,
+        pv.product_id,
+        oi.product_name,
+        COALESCE(SUM(oi.quantity), 0)::INT AS units_sold,
+        COALESCE(SUM(oi.quantity * oi.unit_price), 0)::NUMERIC(12,2) AS total_amount
+      FROM Order_Item oi
+      JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      JOIN Product p ON pv.product_id = p.product_id
+      JOIN Orders o ON oi.order_id = o.order_id
+      WHERE p.seller_id = ${id}
+        AND o.order_status <> 'CANCELLED'
+      GROUP BY
+        EXTRACT(YEAR FROM o.order_date),
+        EXTRACT(MONTH FROM o.order_date),
+        TO_CHAR(o.order_date, 'Mon YYYY'),
+        pv.product_id,
+        oi.product_name
+      ORDER BY year DESC, month DESC, units_sold DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        seller_id: Number(id),
+        total_units_sold: totals[0]?.total_units_sold ?? 0,
+        total_sales_amount: totals[0]?.total_sales_amount ?? 0,
+        total_orders: totals[0]?.total_orders ?? 0,
+        sales_history: salesHistory,
+        monthly_breakdown: monthlyBreakdown,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getSellerSalesSummary:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 

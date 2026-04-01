@@ -1,5 +1,7 @@
 import { sql } from "../config/db.js";
 
+const ORDER_STATUS_VALUES = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REJECTED', 'SUCCESSFUL'];
+
 const ensureOrderItemTable = async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS Order_Item (
@@ -18,9 +20,132 @@ const ensureOrderItemTable = async () => {
   `;
 };
 
+const ensureOrderSellerApprovalTable = async () => {
+  await sql`
+    CREATE TABLE IF NOT EXISTS Order_Seller_Approval (
+      order_id INT NOT NULL,
+      seller_id INT NOT NULL,
+      approval_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (approval_status IN ('PENDING', 'CONFIRMED', 'REJECTED')),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (order_id, seller_id),
+      FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
+      FOREIGN KEY (seller_id) REFERENCES Sellers(seller_id) ON DELETE CASCADE
+    )
+  `;
+};
+
+const ensureOrderStatusConstraint = async () => {
+  await sql`
+    DO $$
+    DECLARE
+      constraint_name TEXT;
+    BEGIN
+      SELECT con.conname INTO constraint_name
+      FROM pg_constraint con
+      JOIN pg_class rel ON rel.oid = con.conrelid
+      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+      WHERE rel.relname = 'orders'
+        AND nsp.nspname = 'public'
+        AND con.contype = 'c'
+        AND pg_get_constraintdef(con.oid) ILIKE '%order_status%'
+      LIMIT 1;
+
+      IF constraint_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE Orders DROP CONSTRAINT %I', constraint_name);
+      END IF;
+
+      BEGIN
+        ALTER TABLE Orders
+        ADD CONSTRAINT orders_order_status_check
+        CHECK (order_status IN ('PENDING','CONFIRMED','SHIPPED','DELIVERED','CANCELLED','REJECTED','SUCCESSFUL'));
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END;
+    END $$;
+  `;
+};
+
+const ensureOrderWorkflowSchema = async () => {
+  await ensureOrderItemTable();
+  try {
+    await ensureOrderSellerApprovalTable();
+  } catch (error) {
+    // Do not block checkout if migration cannot run on current DB role.
+    console.warn("Skipping seller approval table migration:", error?.message || error);
+  }
+  try {
+    await ensureOrderStatusConstraint();
+  } catch (error) {
+    // Never block checkout/order placement due to runtime constraint migration issues.
+    console.warn("Skipping order status constraint migration:", error?.message || error);
+  }
+};
+
+const isSellerApprovalTableAvailable = async () => {
+  try {
+    const rows = await sql`
+      SELECT to_regclass('public.order_seller_approval') AS table_name
+    `;
+    return Boolean(rows[0]?.table_name);
+  } catch {
+    return false;
+  }
+};
+
+const reserveStockAndConfirmOrder = async (orderId) => {
+  const orderRows = await sql`
+    SELECT order_id, cart_id, order_status
+    FROM Orders
+    WHERE order_id = ${orderId}
+    LIMIT 1
+  `;
+
+  if (orderRows.length === 0) {
+    throw new Error("ORDER_NOT_FOUND");
+  }
+
+  const order = orderRows[0];
+  if (order.order_status === 'CONFIRMED' || order.order_status === 'SHIPPED' || order.order_status === 'DELIVERED' || order.order_status === 'SUCCESSFUL') {
+    return;
+  }
+
+  const cartItems = await sql`
+    SELECT ct.product_variation_id, ct.quantity
+    FROM Contains ct
+    WHERE ct.cart_id = ${order.cart_id}
+  `;
+
+  for (const item of cartItems) {
+    const stockResult = await sql`
+      UPDATE Product_Variation
+      SET stock_quantity = stock_quantity - ${item.quantity}
+      WHERE product_variation_id = ${item.product_variation_id}
+        AND stock_quantity >= ${item.quantity}
+      RETURNING product_variation_id
+    `;
+
+    if (stockResult.length === 0) {
+      throw new Error(`INSUFFICIENT_STOCK:${item.product_variation_id}`);
+    }
+  }
+
+  await sql`
+    DELETE FROM Contains
+    WHERE cart_id = ${order.cart_id}
+  `;
+
+  await sql`
+    UPDATE Orders
+    SET order_status = 'CONFIRMED'
+    WHERE order_id = ${orderId}
+  `;
+};
+
 // Get all orders
 export const getOrders = async (req, res) => {
   try {
+    await ensureOrderWorkflowSchema();
     const orders = await sql`
       SELECT o.*, da.address_id AS delivery_address_id
       FROM Orders o
@@ -39,7 +164,7 @@ export const getOrder = async (req, res) => {
   const { id } = req.params;
 
   try {
-    await ensureOrderItemTable();
+    await ensureOrderWorkflowSchema();
 
     const order = await sql`
       SELECT o.*,
@@ -113,7 +238,7 @@ export const getUserOrders = async (req, res) => {
   const { userId } = req.params;
 
   try {
-    await ensureOrderItemTable();
+    await ensureOrderWorkflowSchema();
 
     const orders = await sql`
       SELECT o.*, o.order_status AS status,
@@ -196,7 +321,7 @@ export const createOrder = async (req, res) => {
   }
 
   try {
-    await ensureOrderItemTable();
+    await ensureOrderWorkflowSchema();
 
     const cart = await sql`
       SELECT cart_id, user_id
@@ -217,6 +342,7 @@ export const createOrder = async (req, res) => {
       SELECT ct.product_variation_id, ct.quantity,
              COALESCE(pv.price, p.price) AS item_price,
              pv.stock_quantity,
+             p.seller_id,
              p.product_name,
              p.product_image,
              vt.variation_type_name AS variation_type,
@@ -349,6 +475,18 @@ export const createOrder = async (req, res) => {
 
     const newOrder = newOrderRows[0];
 
+    const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
+    if (sellerApprovalAvailable) {
+      const uniqueSellerIds = [...new Set(cartItems.map((item) => Number(item.seller_id)).filter((value) => Number.isFinite(value)))];
+      for (const sellerId of uniqueSellerIds) {
+        await sql`
+          INSERT INTO Order_Seller_Approval (order_id, seller_id, approval_status)
+          VALUES (${newOrder.order_id}, ${sellerId}, 'PENDING')
+          ON CONFLICT (order_id, seller_id) DO NOTHING
+        `;
+      }
+    }
+
     for (const item of cartItems) {
       await sql`
         INSERT INTO Order_Item (
@@ -394,7 +532,10 @@ export const createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in createOrder:", error);
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    const message = process.env.NODE_ENV === "production"
+      ? "Internal Server Error"
+      : (error?.message || "Internal Server Error");
+    res.status(500).json({ success: false, message });
   }
 };
 
@@ -407,82 +548,43 @@ export const updateOrderStatus = async (req, res) => {
     return res.status(400).json({ success: false, message: "order_status is required" });
   }
 
-  const validStatuses = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+  const validStatuses = ORDER_STATUS_VALUES;
   if (!validStatuses.includes(order_status)) {
     return res.status(400).json({ success: false, message: "Invalid order status" });
   }
 
   try {
+    await ensureOrderWorkflowSchema();
+    const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
+    if (!sellerApprovalAvailable) {
+      return res.status(503).json({ success: false, message: "Seller approval workflow is not available. Please contact admin." });
+    }
     if (order_status === 'CONFIRMED') {
-      const orderRows = await sql`
-        SELECT order_id, cart_id, order_status
+      try {
+        await reserveStockAndConfirmOrder(id);
+      } catch (confirmError) {
+        const rawMessage = String(confirmError?.message || "");
+        if (rawMessage.startsWith("INSUFFICIENT_STOCK:")) {
+          return res.status(409).json({
+            success: false,
+            message: "Insufficient stock while confirming order. Please refresh and try again.",
+          });
+        }
+
+        if (rawMessage === "ORDER_NOT_FOUND") {
+          return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        throw confirmError;
+      }
+
+      const confirmedRows = await sql`
+        SELECT *
         FROM Orders
         WHERE order_id = ${id}
         LIMIT 1
       `;
-
-      if (orderRows.length === 0) {
-        return res.status(404).json({ success: false, message: "Order not found" });
-      }
-
-      const order = orderRows[0];
-
-      console.log('Confirming order:', id, 'cart:', order.cart_id, 'current status:', order.order_status);
-
-      if (order.order_status === 'CONFIRMED') {
-        const existing = await sql`
-          SELECT *
-          FROM Orders
-          WHERE order_id = ${id}
-          LIMIT 1
-        `;
-        return res.status(200).json({ success: true, data: existing[0] });
-      }
-
-      const cartItems = await sql`
-        SELECT ct.product_variation_id, ct.quantity
-        FROM Contains ct
-        WHERE ct.cart_id = ${order.cart_id}
-      `;
-
-      console.log('Cart has', cartItems.length, 'items');
-
-      for (const item of cartItems) {
-        const stockResult = await sql`
-          UPDATE Product_Variation
-          SET stock_quantity = stock_quantity - ${item.quantity}
-          WHERE product_variation_id = ${item.product_variation_id}
-            AND stock_quantity >= ${item.quantity}
-          RETURNING product_variation_id, stock_quantity
-        `;
-
-        if (stockResult.length === 0) {
-          console.log('Stock error for variation', item.product_variation_id);
-          return res.status(409).json({
-            success: false,
-            message: `Insufficient stock for product variation ${item.product_variation_id}. Please refresh and try again.`,
-          });
-        }
-
-        console.log('Updated variation', item.product_variation_id, 'new stock:', stockResult[0].stock_quantity);
-      }
-
-      console.log('Clearing cart', order.cart_id);
-      await sql`
-        DELETE FROM Contains
-        WHERE cart_id = ${order.cart_id}
-      `;
-
-      console.log('Marking order', id, 'as CONFIRMED');
-      const updatedOrder = await sql`
-        UPDATE Orders
-        SET order_status = 'CONFIRMED'
-        WHERE order_id = ${id}
-        RETURNING *
-      `;
-
-      console.log('Order confirmed:', updatedOrder[0]);
-      return res.status(200).json({ success: true, data: updatedOrder[0] });
+      return res.status(200).json({ success: true, data: confirmedRows[0] });
     }
 
     const updated = await sql`
@@ -507,6 +609,200 @@ export const updateOrderStatus = async (req, res) => {
 
     console.error("Error in updateOrderStatus:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// Get orders where a seller has items and can confirm/reject
+export const getSellerOrders = async (req, res) => {
+  const { sellerId } = req.params;
+
+  try {
+    await ensureOrderWorkflowSchema();
+    const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
+    if (!sellerApprovalAvailable) {
+      return res.status(503).json({ success: false, message: "Seller approval workflow is not available. Please contact admin." });
+    }
+
+    const approvals = await sql`
+      SELECT
+        o.order_id,
+        o.user_id,
+        o.order_date,
+        o.order_status,
+        osa.approval_status,
+        COALESCE(SUM(oi.quantity), 0)::INT AS seller_units,
+        COALESCE(SUM(oi.quantity * oi.unit_price), 0)::NUMERIC(12,2) AS seller_amount,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'order_item_id', oi.order_item_id,
+              'product_id', pv.product_id,
+              'product_name', oi.product_name,
+              'quantity', oi.quantity,
+              'unit_price', oi.unit_price,
+              'variation_type', oi.variation_type,
+              'variation_value', oi.variation_value
+            )
+            ORDER BY oi.order_item_id
+          ) FILTER (WHERE oi.order_item_id IS NOT NULL),
+          '[]'::json
+        ) AS items
+      FROM Order_Seller_Approval osa
+      JOIN Orders o ON o.order_id = osa.order_id
+      LEFT JOIN Order_Item oi ON oi.order_id = o.order_id
+      LEFT JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      LEFT JOIN Product p ON pv.product_id = p.product_id
+      WHERE osa.seller_id = ${sellerId}
+        AND (p.seller_id = ${sellerId} OR p.seller_id IS NULL)
+      GROUP BY o.order_id, o.user_id, o.order_date, o.order_status, osa.approval_status
+      ORDER BY o.order_date DESC, o.order_id DESC
+    `;
+
+    return res.status(200).json({ success: true, data: approvals });
+  } catch (error) {
+    console.error("Error in getSellerOrders:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// Seller confirms/rejects their part of an order
+export const sellerRespondToOrder = async (req, res) => {
+  const { id } = req.params;
+  const { seller_id, approval_status } = req.body;
+
+  if (!seller_id || !approval_status) {
+    return res.status(400).json({ success: false, message: "seller_id and approval_status are required" });
+  }
+
+  const normalizedStatus = String(approval_status).trim().toUpperCase();
+  if (!['CONFIRMED', 'REJECTED'].includes(normalizedStatus)) {
+    return res.status(400).json({ success: false, message: "approval_status must be CONFIRMED or REJECTED" });
+  }
+
+  try {
+    await ensureOrderWorkflowSchema();
+
+    const approval = await sql`
+      UPDATE Order_Seller_Approval
+      SET approval_status = ${normalizedStatus},
+          updated_at = CURRENT_TIMESTAMP
+      WHERE order_id = ${id}
+        AND seller_id = ${seller_id}
+      RETURNING order_id, seller_id, approval_status, updated_at
+    `;
+
+    if (approval.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller approval record not found for this order" });
+    }
+
+    const allApprovals = await sql`
+      SELECT approval_status
+      FROM Order_Seller_Approval
+      WHERE order_id = ${id}
+    `;
+
+    const hasRejected = allApprovals.some((row) => row.approval_status === 'REJECTED');
+    const allConfirmed = allApprovals.length > 0 && allApprovals.every((row) => row.approval_status === 'CONFIRMED');
+
+    if (hasRejected) {
+      await sql`
+        UPDATE Orders
+        SET order_status = 'REJECTED'
+        WHERE order_id = ${id}
+      `;
+    } else if (allConfirmed) {
+      try {
+        await reserveStockAndConfirmOrder(id);
+      } catch (confirmError) {
+        const rawMessage = String(confirmError?.message || "");
+        if (rawMessage.startsWith("INSUFFICIENT_STOCK:")) {
+          return res.status(409).json({
+            success: false,
+            message: "Insufficient stock while finalizing this order.",
+          });
+        }
+
+        if (rawMessage === "ORDER_NOT_FOUND") {
+          return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        throw confirmError;
+      }
+    } else {
+      await sql`
+        UPDATE Orders
+        SET order_status = 'PENDING'
+        WHERE order_id = ${id}
+      `;
+    }
+
+    const orderRows = await sql`
+      SELECT *
+      FROM Orders
+      WHERE order_id = ${id}
+      LIMIT 1
+    `;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        approval: approval[0],
+        order: orderRows[0],
+      },
+    });
+  } catch (error) {
+    console.error("Error in sellerRespondToOrder:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+// User marks order as received -> SUCCESSFUL
+export const markOrderReceived = async (req, res) => {
+  const { id } = req.params;
+  const { user_id } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({ success: false, message: "user_id is required" });
+  }
+
+  try {
+    await ensureOrderWorkflowSchema();
+
+    const orderRows = await sql`
+      SELECT order_id, user_id, order_status
+      FROM Orders
+      WHERE order_id = ${id}
+      LIMIT 1
+    `;
+
+    if (orderRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orderRows[0];
+    if (Number(order.user_id) !== Number(user_id)) {
+      return res.status(403).json({ success: false, message: "You are not allowed to update this order" });
+    }
+
+    if (order.order_status === 'REJECTED' || order.order_status === 'CANCELLED') {
+      return res.status(400).json({ success: false, message: "Rejected/cancelled order cannot be marked as received" });
+    }
+
+    if (!['CONFIRMED', 'SHIPPED', 'DELIVERED', 'SUCCESSFUL'].includes(order.order_status)) {
+      return res.status(400).json({ success: false, message: "Order can be marked received only after seller confirmation" });
+    }
+
+    const updated = await sql`
+      UPDATE Orders
+      SET order_status = 'SUCCESSFUL'
+      WHERE order_id = ${id}
+      RETURNING *
+    `;
+
+    return res.status(200).json({ success: true, data: updated[0] });
+  } catch (error) {
+    console.error("Error in markOrderReceived:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 

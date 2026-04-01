@@ -1,9 +1,14 @@
 const BASE = '/api';
 
 async function request(url, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
   });
 
   const raw = await res.text();
@@ -54,6 +59,7 @@ export const addProductVariation = (id, body) => request(`/products/${id}/variat
 /* ── Authentication ── */
 export const loginUser       = (body) => request('/users/login', { method: 'POST', body: JSON.stringify(body) });
 export const loginSeller     = (body) => request('/sellers/login', { method: 'POST', body: JSON.stringify(body) });
+export const loginAdmin      = (body) => request('/admin/login', { method: 'POST', body: JSON.stringify(body) });
 
 /* ── Users ── */
 export const getUsers        = async ()     => (await request('/users')).data;
@@ -69,6 +75,7 @@ export const addUserAddress  = (id, body) => request(`/users/${id}/address`, { m
 export const getSellers      = async ()     => (await request('/sellers')).data;
 export const getSeller       = async (id)   => (await request(`/sellers/${id}`)).data;
 export const getSellerProfile = async (id)   => (await request(`/sellers/${id}/profile`)).data;
+export const getSellerSalesSummary = async (id) => (await request(`/sellers/${id}/sales-summary`)).data;
 export const createSeller    = (body) => request('/sellers', { method: 'POST', body: JSON.stringify(body) });
 export const updateSeller    = (id, body) => request(`/sellers/${id}`, { method: 'PUT', body: JSON.stringify(body) });
 export const updateSellerProfile = (id, body) => request(`/sellers/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) });
@@ -76,6 +83,14 @@ export const deleteSeller    = (id)   => request(`/sellers/${id}`, { method: 'DE
 export const addSellerEmail  = (id, body) => request(`/sellers/${id}/email`, { method: 'POST', body: JSON.stringify(body) });
 export const addSellerPhone  = (id, body) => request(`/sellers/${id}/phone`, { method: 'POST', body: JSON.stringify(body) });
 export const addSellerAddress = (id, body) => request(`/sellers/${id}/address`, { method: 'POST', body: JSON.stringify(body) });
+export const adminVerifySeller = (id, token) => request(`/admin/sellers/${id}/verify`, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${token}` },
+});
+export const adminDeleteSeller = (id, token) => request(`/admin/sellers/${id}/remove`, {
+  method: 'DELETE',
+  headers: { Authorization: `Bearer ${token}` },
+});
 
 /* ── Cart ── */
 export const getCarts        = async ()     => (await request('/cart')).data;
@@ -91,8 +106,11 @@ export const deleteCart      = (id)   => request(`/cart/${id}`, { method: 'DELET
 export const getOrders       = async ()     => (await request('/orders')).data;
 export const getOrder        = async (id)   => (await request(`/orders/${id}`)).data;
 export const getUserOrders   = async (uid)  => (await request(`/orders/user/${uid}`)).data;
+export const getSellerOrders = async (sellerId) => (await request(`/orders/seller/${sellerId}`)).data;
 export const createOrder     = (body) => request('/orders', { method: 'POST', body: JSON.stringify(body) });
 export const updateOrderStatus = (id, body) => request(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify(body) });
+export const sellerRespondToOrder = (id, body) => request(`/orders/${id}/seller-response`, { method: 'PUT', body: JSON.stringify(body) });
+export const markOrderReceived = (id, body) => request(`/orders/${id}/received`, { method: 'PUT', body: JSON.stringify(body) });
 export const deleteOrder     = (id)   => request(`/orders/${id}`, { method: 'DELETE' });
 
 /* ── Payments ── */

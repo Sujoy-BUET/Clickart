@@ -3,10 +3,13 @@ import { Github, Twitter, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Footer() {
-  const { user, isSeller } = useAuth();
+  const { user, isSeller, isAdmin } = useAuth();
 
-  const accountLinks = [
+  const accountLinks = isAdmin() ? [
+    { label: 'Admin Dashboard', to: '/admin/dashboard' },
+  ] : [
     { label: 'Login', to: '/login' },
+    { label: 'Admin Login', to: '/admin/login' },
     { label: 'Register', to: '/register' },
     { label: 'My Orders', to: user?.user_id ? `/orders/user/${user.user_id}` : '/login' },
   ];

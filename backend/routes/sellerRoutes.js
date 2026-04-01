@@ -10,8 +10,10 @@ import {
   addSellerAddress,
   authenticateSeller,
   getSellerProfile,
+  getSellerSalesSummary,
   updateSellerProfile,
 } from "../controllers/sellerController.js";
+import { requireAdminAuth } from "../lib/adminAuth.js";
 
 const router = express.Router();
 
@@ -19,10 +21,11 @@ router.post("/login", authenticateSeller);
 router.get("/", getSellers);
 router.get("/:id", getSeller);
 router.get("/:id/profile", getSellerProfile);
+router.get("/:id/sales-summary", getSellerSalesSummary);
 router.post("/", createSeller);
 router.put("/:id", updateSeller);
 router.put("/:id/profile", updateSellerProfile);
-router.delete("/:id", deleteSeller);
+router.delete("/:id", requireAdminAuth, deleteSeller);
 router.post("/:id/email", addSellerEmail);
 router.post("/:id/phone", addSellerPhone);
 router.post("/:id/address", addSellerAddress);
