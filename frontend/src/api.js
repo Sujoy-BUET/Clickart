@@ -60,6 +60,15 @@ export const addProductVariation = (id, body) => request(`/products/${id}/variat
 export const loginUser       = (body) => request('/users/login', { method: 'POST', body: JSON.stringify(body) });
 export const loginSeller     = (body) => request('/sellers/login', { method: 'POST', body: JSON.stringify(body) });
 export const loginAdmin      = (body) => request('/admin/login', { method: 'POST', body: JSON.stringify(body) });
+export const getAdminProfile = (token) => request('/admin/profile', {
+  method: 'GET',
+  headers: token ? { Authorization: `Bearer ${token}` } : {},
+});
+export const updateAdminCredentials = (body, token) => request('/admin/credentials', {
+  method: 'PUT',
+  body: JSON.stringify(body),
+  headers: token ? { Authorization: `Bearer ${token}` } : {},
+});
 
 /* ── Users ── */
 export const getUsers        = async ()     => (await request('/users')).data;
@@ -108,7 +117,11 @@ export const getOrder        = async (id)   => (await request(`/orders/${id}`)).
 export const getUserOrders   = async (uid)  => (await request(`/orders/user/${uid}`)).data;
 export const getSellerOrders = async (sellerId) => (await request(`/orders/seller/${sellerId}`)).data;
 export const createOrder     = (body) => request('/orders', { method: 'POST', body: JSON.stringify(body) });
-export const updateOrderStatus = (id, body) => request(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify(body) });
+export const updateOrderStatus = (id, body, token) => request(`/orders/${id}/status`, {
+  method: 'PUT',
+  body: JSON.stringify(body),
+  headers: token ? { Authorization: `Bearer ${token}` } : {},
+});
 export const sellerRespondToOrder = (id, body) => request(`/orders/${id}/seller-response`, { method: 'PUT', body: JSON.stringify(body) });
 export const markOrderReceived = (id, body) => request(`/orders/${id}/received`, { method: 'PUT', body: JSON.stringify(body) });
 export const deleteOrder     = (id)   => request(`/orders/${id}`, { method: 'DELETE' });

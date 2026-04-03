@@ -46,7 +46,10 @@ export default function SellersPage() {
 
               <div className="flex items-center gap-3 text-sm text-gray-400 mb-4">
                 <span className="flex items-center gap-1">
-                  <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" /> 4.5
+                  <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
+                  {Number(s.review_count || 0) > 0
+                    ? `${Number(s.average_rating || 0).toFixed(1)} (${Number(s.review_count || 0)})`
+                    : 'No ratings yet'}
                 </span>
                 {s.is_verified && (
                   <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-400">

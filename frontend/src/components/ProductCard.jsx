@@ -6,7 +6,7 @@ import StarRating from './StarRating';
 const DEFAULT_IMAGE = '/default-product.svg';
 
 export default function ProductCard({ product }) {
-  const { product_id, product_name, price, brand_name, category_name, store_name, product_image, review_count, average_rating, in_stock } = product;
+  const { product_id, product_name, price, display_price, brand_name, category_name, store_name, product_image, review_count, average_rating, in_stock } = product;
   const [currentImage, setCurrentImage] = useState(DEFAULT_IMAGE);
   const [imageError, setImageError] = useState(false);
 
@@ -18,6 +18,7 @@ export default function ProductCard({ product }) {
       ? ['true', 't', '1'].includes(in_stock.toLowerCase())
       : in_stock === true;
   const isOutOfStock = in_stock !== undefined && in_stock !== null ? !normalizedInStock : Number(product?.stock_quantity ?? 0) <= 0;
+  const effectivePrice = Number(display_price ?? price ?? 0);
 
   const normalizedImage = useMemo(() => {
     const raw = String(product_image || '').trim();
@@ -88,7 +89,7 @@ export default function ProductCard({ product }) {
 
         <div className="mt-auto flex items-center justify-between pt-3 border-t border-gray-800">
           <span className="text-lg font-bold text-violet-400">
-            ৳{Number(price).toLocaleString('en-BD')}
+            ৳{effectivePrice.toLocaleString('en-BD')}
           </span>
           <Link
             to={`/products/${product_id}`}

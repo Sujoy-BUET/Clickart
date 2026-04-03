@@ -30,6 +30,36 @@ const resolveCategoryId = async ({ category_id, category_name }) => {
   return createdCategory[0].category_id;
 };
 
+const resolveBrandId = async ({ brand_id, brand_name }) => {
+  if (brand_id) {
+    return Number(brand_id);
+  }
+
+  if (!brand_name || !String(brand_name).trim()) {
+    return null;
+  }
+
+  const normalizedBrandName = String(brand_name).trim();
+  const existingBrand = await sql`
+    SELECT brand_id
+    FROM Brand
+    WHERE LOWER(TRIM(brand_name)) = LOWER(${normalizedBrandName})
+    LIMIT 1
+  `;
+
+  if (existingBrand.length > 0) {
+    return existingBrand[0].brand_id;
+  }
+
+  const createdBrand = await sql`
+    INSERT INTO Brand (brand_name)
+    VALUES (${normalizedBrandName})
+    RETURNING brand_id
+  `;
+
+  return createdBrand[0].brand_id;
+};
+
 const resolveVariationId = async ({ variation_id, variation_type, variation_value }) => {
   if (variation_id) {
     return Number(variation_id);
@@ -65,6 +95,18 @@ const resolveVariationId = async ({ variation_id, variation_type, variation_valu
     variationTypeId = createdType[0].variation_type_id;
   }
 
+  const exactValue = await sql`
+    SELECT variation_id
+    FROM Variation
+    WHERE variation_type_id = ${variationTypeId}
+      AND TRIM(variation_value) = ${normalizedValue}
+    LIMIT 1
+  `;
+
+  if (exactValue.length > 0) {
+    return exactValue[0].variation_id;
+  }
+
   const existingValue = await sql`
     SELECT variation_id
     FROM Variation
@@ -74,7 +116,16 @@ const resolveVariationId = async ({ variation_id, variation_type, variation_valu
   `;
 
   if (existingValue.length > 0) {
-    return existingValue[0].variation_id;
+    const resolvedVariationId = existingValue[0].variation_id;
+
+    // Keep the canonical stored value aligned with the latest seller-entered casing.
+    await sql`
+      UPDATE Variation
+      SET variation_value = ${normalizedValue}
+      WHERE variation_id = ${resolvedVariationId}
+    `;
+
+    return resolvedVariationId;
   }
 
   const createdValue = await sql`
@@ -84,6 +135,55 @@ const resolveVariationId = async ({ variation_id, variation_type, variation_valu
   `;
 
   return createdValue[0].variation_id;
+};
+
+const resolveVariationRows = async ({ variations, basePrice, baseStock }) => {
+  if (!Array.isArray(variations)) {
+    return { resolved: [] };
+  }
+
+  const resolved = [];
+  const seenVariationIds = new Set();
+
+  for (let index = 0; index < variations.length; index += 1) {
+    const item = variations[index] || {};
+    const type = String(item.variation_type || "").trim();
+    const value = String(item.variation_value || "").trim();
+
+    if (!type || !value) {
+      return { error: `Variation row ${index + 1}: both variation_type and variation_value are required` };
+    }
+
+    const variationId = await resolveVariationId({
+      variation_id: item.variation_id,
+      variation_type: type,
+      variation_value: value,
+    });
+
+    if (!variationId) {
+      return { error: `Variation row ${index + 1}: invalid variation input` };
+    }
+
+    if (seenVariationIds.has(variationId)) {
+      return { error: `Variation row ${index + 1}: duplicate variation combination` };
+    }
+
+    const variationPrice = item?.price === undefined || item?.price === null || item?.price === ""
+      ? Number(basePrice)
+      : Number(item.price);
+    const variationStock = item?.stock_quantity === undefined || item?.stock_quantity === null || item?.stock_quantity === ""
+      ? Number(baseStock)
+      : Number(item.stock_quantity);
+
+    if (Number.isNaN(variationPrice) || Number.isNaN(variationStock) || variationStock < 0) {
+      return { error: `Variation row ${index + 1}: invalid price or stock_quantity` };
+    }
+
+    seenVariationIds.add(variationId);
+    resolved.push({ variationId, variationPrice, variationStock });
+  }
+
+  return { resolved };
 };
 
 // Get all products (with brand, category, seller info)
@@ -98,6 +198,7 @@ export const getProducts = async (req, res) => {
         SELECT p.*, b.brand_name, c.category_name, s.store_name,
                COALESCE(rs.review_count, 0) AS review_count,
                COALESCE(rs.average_rating, 0) AS average_rating,
+               COALESCE(vs.min_variation_price, p.price) AS display_price,
                CASE 
                  WHEN COALESCE(vs.has_variation, false) THEN COALESCE(vs.has_stock, false)
                  ELSE p.stock_quantity > 0
@@ -117,7 +218,8 @@ export const getProducts = async (req, res) => {
         LEFT JOIN (
           SELECT pv.product_id,
                  true as has_variation,
-                 BOOL_OR(pv.stock_quantity > 0) AS has_stock
+                 BOOL_OR(pv.stock_quantity > 0) AS has_stock,
+                 MIN(pv.price) AS min_variation_price
           FROM Product_Variation pv
           GROUP BY pv.product_id
         ) vs ON vs.product_id = p.product_id
@@ -129,6 +231,7 @@ export const getProducts = async (req, res) => {
         SELECT p.*, b.brand_name, c.category_name, s.store_name,
                COALESCE(rs.review_count, 0) AS review_count,
                COALESCE(rs.average_rating, 0) AS average_rating,
+               COALESCE(vs.min_variation_price, p.price) AS display_price,
                CASE 
                  WHEN COALESCE(vs.has_variation, false) THEN COALESCE(vs.has_stock, false)
                  ELSE p.stock_quantity > 0
@@ -148,7 +251,8 @@ export const getProducts = async (req, res) => {
         LEFT JOIN (
           SELECT pv.product_id,
                  true as has_variation,
-                 BOOL_OR(pv.stock_quantity > 0) AS has_stock
+                 BOOL_OR(pv.stock_quantity > 0) AS has_stock,
+                 MIN(pv.price) AS min_variation_price
           FROM Product_Variation pv
           GROUP BY pv.product_id
         ) vs ON vs.product_id = p.product_id
@@ -235,22 +339,31 @@ export const createProduct = async (req, res) => {
     category_id,
     category_name,
     brand_id,
+    brand_name,
     variations,
   } = req.body;
 
-  if (!product_name || !seller_id || !brand_id) {
+  if (!product_name || !seller_id || (!brand_id && !brand_name)) {
     return res.status(400).json({
       success: false,
-      message: "product_name, seller_id and brand_id are required",
+      message: "product_name, seller_id and either brand_id or brand_name are required",
     });
   }
 
   try {
     const resolvedCategoryId = await resolveCategoryId({ category_id, category_name });
+    const resolvedBrandId = await resolveBrandId({ brand_id, brand_name });
     if (!resolvedCategoryId) {
       return res.status(400).json({
         success: false,
         message: "Either category_id or category_name is required",
+      });
+    }
+
+    if (!resolvedBrandId) {
+      return res.status(400).json({
+        success: false,
+        message: "Either brand_id or brand_name is required",
       });
     }
 
@@ -269,34 +382,22 @@ export const createProduct = async (req, res) => {
 
     const newProduct = await sql`
       INSERT INTO Product (product_name, description, price, stock_quantity, product_image, seller_id, category_id, brand_id)
-      VALUES (${String(product_name).trim()}, ${description ?? null}, ${basePrice}, ${baseStock}, ${product_image ?? null}, ${seller_id}, ${resolvedCategoryId}, ${brand_id})
+      VALUES (${String(product_name).trim()}, ${description ?? null}, ${basePrice}, ${baseStock}, ${product_image ?? null}, ${seller_id}, ${resolvedCategoryId}, ${resolvedBrandId})
       RETURNING *
     `;
 
     const createdProduct = newProduct[0];
 
     if (Array.isArray(variations) && variations.length > 0) {
-      for (const item of variations) {
-        const variationId = await resolveVariationId(item);
+      const variationResolution = await resolveVariationRows({ variations, basePrice, baseStock });
+      if (variationResolution.error) {
+        return res.status(400).json({ success: false, message: variationResolution.error });
+      }
 
-        if (!variationId) {
-          continue;
-        }
-
-        const variationPrice = item?.price === undefined || item?.price === null || item?.price === ""
-          ? basePrice
-          : Number(item.price);
-        const variationStock = item?.stock_quantity === undefined || item?.stock_quantity === null || item?.stock_quantity === ""
-          ? baseStock
-          : Number(item.stock_quantity);
-
-        if (Number.isNaN(variationPrice) || (variationStock !== null && Number.isNaN(variationStock))) {
-          continue;
-        }
-
+      for (const item of variationResolution.resolved) {
         await sql`
           INSERT INTO Product_Variation (product_id, variation_id, price, stock_quantity)
-          VALUES (${createdProduct.product_id}, ${variationId}, ${variationPrice}, ${variationStock})
+          VALUES (${createdProduct.product_id}, ${item.variationId}, ${item.variationPrice}, ${item.variationStock})
           ON CONFLICT (product_id, variation_id)
           DO UPDATE SET
             price = EXCLUDED.price,
@@ -315,10 +416,42 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   const { id } = req.params;
-  const { product_name, description, price, stock_quantity, product_image, seller_id, category_id, category_name, brand_id } = req.body;
+  const { product_name, description, price, stock_quantity, product_image, seller_id, category_id, category_name, brand_id, brand_name, variations } = req.body;
 
   try {
+    const hasProductName = product_name !== undefined;
+    const hasDescription = description !== undefined;
+    const hasPrice = price !== undefined;
+    const hasStockQuantity = stock_quantity !== undefined;
+    const hasProductImage = product_image !== undefined;
+    const hasSellerId = seller_id !== undefined;
+
+    const normalizedProductName = hasProductName ? String(product_name ?? "").trim() : null;
+    const normalizedDescription = hasDescription ? (String(description ?? "").trim() || null) : null;
+    const normalizedProductImage = hasProductImage ? (String(product_image ?? "").trim() || null) : null;
+    const normalizedPrice = hasPrice ? Number(price) : null;
+    const normalizedStockQuantity = hasStockQuantity ? Number(stock_quantity) : null;
+    const normalizedSellerId = hasSellerId ? Number(seller_id) : null;
+
+    if (hasProductName && !normalizedProductName) {
+      return res.status(400).json({ success: false, message: "product_name cannot be empty" });
+    }
+
+    if (hasPrice && (Number.isNaN(normalizedPrice) || normalizedPrice < 0)) {
+      return res.status(400).json({ success: false, message: "Invalid price" });
+    }
+
+    if (hasStockQuantity && (Number.isNaN(normalizedStockQuantity) || normalizedStockQuantity < 0 || !Number.isInteger(normalizedStockQuantity))) {
+      return res.status(400).json({ success: false, message: "Invalid stock_quantity" });
+    }
+
+    if (hasSellerId && (Number.isNaN(normalizedSellerId) || normalizedSellerId <= 0)) {
+      return res.status(400).json({ success: false, message: "Invalid seller_id" });
+    }
+
     let resolvedCategoryId = null;
+    let resolvedBrandId = null;
+
     if (category_id || category_name) {
       resolvedCategoryId = await resolveCategoryId({ category_id, category_name });
       if (!resolvedCategoryId) {
@@ -326,22 +459,80 @@ export const updateProduct = async (req, res) => {
       }
     }
 
+    if (brand_id || brand_name) {
+      resolvedBrandId = await resolveBrandId({ brand_id, brand_name });
+      if (!resolvedBrandId) {
+        return res.status(400).json({ success: false, message: "Invalid brand input" });
+      }
+    }
+
     const updated = await sql`
       UPDATE Product
-      SET product_name   = COALESCE(${product_name ?? null}, product_name),
-          description    = COALESCE(${description ?? null}, description),
-          price          = COALESCE(${price ?? null}, price),
-          stock_quantity = COALESCE(${stock_quantity ?? null}, stock_quantity),
-          product_image  = COALESCE(${product_image ?? null}, product_image),
-          seller_id      = COALESCE(${seller_id ?? null}, seller_id),
+      SET product_name   = CASE WHEN ${hasProductName} THEN ${normalizedProductName} ELSE product_name END,
+          description    = CASE WHEN ${hasDescription} THEN ${normalizedDescription} ELSE description END,
+          price          = CASE WHEN ${hasPrice} THEN ${normalizedPrice} ELSE price END,
+          stock_quantity = CASE WHEN ${hasStockQuantity} THEN ${normalizedStockQuantity} ELSE stock_quantity END,
+          product_image  = CASE WHEN ${hasProductImage} THEN ${normalizedProductImage} ELSE product_image END,
+          seller_id      = CASE WHEN ${hasSellerId} THEN ${normalizedSellerId} ELSE seller_id END,
           category_id    = COALESCE(${resolvedCategoryId ?? null}, category_id),
-          brand_id       = COALESCE(${brand_id ?? null}, brand_id)
+          brand_id       = COALESCE(${resolvedBrandId ?? null}, brand_id)
       WHERE product_id = ${id}
       RETURNING *
     `;
 
     if (updated.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    // If variations are provided in update payload, sync them with Product_Variation.
+    if (Array.isArray(variations)) {
+      const basePrice = Number(updated[0].price);
+      const baseStock = Number(updated[0].stock_quantity);
+      const variationResolution = await resolveVariationRows({ variations, basePrice, baseStock });
+
+      if (variationResolution.error) {
+        return res.status(400).json({ success: false, message: variationResolution.error });
+      }
+
+      const syncedVariationIds = [];
+
+      for (const item of variationResolution.resolved) {
+        await sql`
+          INSERT INTO Product_Variation (product_id, variation_id, price, stock_quantity)
+          VALUES (${id}, ${item.variationId}, ${item.variationPrice}, ${item.variationStock})
+          ON CONFLICT (product_id, variation_id)
+          DO UPDATE SET
+            price = EXCLUDED.price,
+            stock_quantity = EXCLUDED.stock_quantity
+        `;
+
+        syncedVariationIds.push(item.variationId);
+      }
+
+      if (syncedVariationIds.length > 0) {
+        const existingRows = await sql`
+          SELECT variation_id
+          FROM Product_Variation
+          WHERE product_id = ${id}
+        `;
+
+        const toDeleteIds = existingRows
+          .map((row) => Number(row.variation_id))
+          .filter((variationId) => !syncedVariationIds.includes(variationId));
+
+        for (const variationId of toDeleteIds) {
+          await sql`
+            DELETE FROM Product_Variation
+            WHERE product_id = ${id}
+              AND variation_id = ${variationId}
+          `;
+        }
+      } else {
+        await sql`
+          DELETE FROM Product_Variation
+          WHERE product_id = ${id}
+        `;
+      }
     }
 
     res.status(200).json({ success: true, data: updated[0] });

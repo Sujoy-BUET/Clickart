@@ -1,6 +1,7 @@
 import { sql } from "../config/db.js";
 
 const ORDER_STATUS_VALUES = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REJECTED', 'SUCCESSFUL'];
+const STOCK_DEDUCTED_STATUSES = ['CONFIRMED', 'SHIPPED', 'DELIVERED', 'SUCCESSFUL'];
 
 const ensureOrderItemTable = async () => {
   await sql`
@@ -93,6 +94,127 @@ const isSellerApprovalTableAvailable = async () => {
   }
 };
 
+const getOrderItemsSnapshot = async (orderId) => {
+  return sql`
+    SELECT oi.product_variation_id, oi.quantity
+    FROM Order_Item oi
+    WHERE oi.order_id = ${orderId}
+    ORDER BY oi.order_item_id ASC
+  `;
+};
+
+const adjustStockFromOrderItems = async ({ orderId, mode }) => {
+  const items = await getOrderItemsSnapshot(orderId);
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('ORDER_ITEMS_NOT_FOUND');
+  }
+
+  for (const item of items) {
+    const quantity = Number(item.quantity || 0);
+    const variationId = Number(item.product_variation_id || 0);
+
+    if (!quantity || !variationId) {
+      continue;
+    }
+
+    if (mode === 'DEDUCT') {
+      const stockResult = await sql`
+        UPDATE Product_Variation
+        SET stock_quantity = stock_quantity - ${quantity}
+        WHERE product_variation_id = ${variationId}
+          AND stock_quantity >= ${quantity}
+        RETURNING product_variation_id
+      `;
+
+      if (stockResult.length === 0) {
+        throw new Error(`INSUFFICIENT_STOCK:${variationId}`);
+      }
+    } else if (mode === 'RESTORE') {
+      await sql`
+        UPDATE Product_Variation
+        SET stock_quantity = stock_quantity + ${quantity}
+        WHERE product_variation_id = ${variationId}
+      `;
+    }
+  }
+};
+
+const syncSellerApprovalsForOrder = async ({ orderId, approvalStatus }) => {
+  const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
+  if (!sellerApprovalAvailable) {
+    return;
+  }
+
+  await sql`
+    UPDATE Order_Seller_Approval
+    SET approval_status = ${approvalStatus},
+        updated_at = CURRENT_TIMESTAMP
+    WHERE order_id = ${orderId}
+  `;
+};
+
+const applyAdminOrderDecision = async ({ orderId, decision }) => {
+  const normalizedDecision = String(decision || '').trim().toUpperCase();
+  if (!['DELIVERED', 'REJECTED'].includes(normalizedDecision)) {
+    throw new Error('INVALID_ADMIN_DECISION');
+  }
+
+  const orderRows = await sql`
+    SELECT order_id, order_status
+    FROM Orders
+    WHERE order_id = ${orderId}
+    LIMIT 1
+  `;
+
+  if (orderRows.length === 0) {
+    throw new Error('ORDER_NOT_FOUND');
+  }
+
+  const currentStatus = String(orderRows[0].order_status || '').toUpperCase();
+
+  if (normalizedDecision === 'DELIVERED') {
+    if (currentStatus === 'DELIVERED' || currentStatus === 'SUCCESSFUL') {
+      return orderRows[0];
+    }
+
+    if (currentStatus !== 'PENDING') {
+      throw new Error('INVALID_STATUS_TRANSITION_TO_DELIVERED');
+    }
+
+    await adjustStockFromOrderItems({ orderId, mode: 'DEDUCT' });
+    await syncSellerApprovalsForOrder({ orderId, approvalStatus: 'CONFIRMED' });
+
+    const updatedRows = await sql`
+      UPDATE Orders
+      SET order_status = 'DELIVERED'
+      WHERE order_id = ${orderId}
+      RETURNING *
+    `;
+
+    return updatedRows[0];
+  }
+
+  if (currentStatus === 'REJECTED') {
+    return orderRows[0];
+  }
+
+  if (STOCK_DEDUCTED_STATUSES.includes(currentStatus)) {
+    await adjustStockFromOrderItems({ orderId, mode: 'RESTORE' });
+  }
+
+  await syncSellerApprovalsForOrder({ orderId, approvalStatus: 'REJECTED' });
+
+  const updatedRows = await sql`
+    UPDATE Orders
+    SET order_status = 'REJECTED'
+    WHERE order_id = ${orderId}
+    RETURNING *
+  `;
+
+  return updatedRows[0];
+};
+
 const reserveStockAndConfirmOrder = async (orderId) => {
   const orderRows = await sql`
     SELECT order_id, cart_id, order_status
@@ -147,8 +269,10 @@ export const getOrders = async (req, res) => {
   try {
     await ensureOrderWorkflowSchema();
     const orders = await sql`
-      SELECT o.*, da.address_id AS delivery_address_id
+      SELECT o.*, da.address_id AS delivery_address_id,
+             u.user_name
       FROM Orders o
+      LEFT JOIN Users u ON o.user_id = u.user_id
       LEFT JOIN Delivery_Address da ON o.order_id = da.order_id
       ORDER BY o.order_id DESC
     `;
@@ -555,10 +679,34 @@ export const updateOrderStatus = async (req, res) => {
 
   try {
     await ensureOrderWorkflowSchema();
-    const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
-    if (!sellerApprovalAvailable) {
-      return res.status(503).json({ success: false, message: "Seller approval workflow is not available. Please contact admin." });
+
+    if (order_status === 'DELIVERED' || order_status === 'REJECTED') {
+      try {
+        const updatedOrder = await applyAdminOrderDecision({ orderId: id, decision: order_status });
+        return res.status(200).json({ success: true, data: updatedOrder });
+      } catch (decisionError) {
+        const rawMessage = String(decisionError?.message || '');
+
+        if (rawMessage === 'ORDER_NOT_FOUND') {
+          return res.status(404).json({ success: false, message: 'Order not found' });
+        }
+
+        if (rawMessage === 'ORDER_ITEMS_NOT_FOUND') {
+          return res.status(400).json({ success: false, message: 'Order items are missing for this order' });
+        }
+
+        if (rawMessage === 'INVALID_STATUS_TRANSITION_TO_DELIVERED') {
+          return res.status(400).json({ success: false, message: 'Only pending orders can be marked as delivered' });
+        }
+
+        if (rawMessage.startsWith('INSUFFICIENT_STOCK:')) {
+          return res.status(409).json({ success: false, message: 'Insufficient stock to deliver this order' });
+        }
+
+        throw decisionError;
+      }
     }
+
     if (order_status === 'CONFIRMED') {
       try {
         await reserveStockAndConfirmOrder(id);
@@ -693,47 +841,6 @@ export const sellerRespondToOrder = async (req, res) => {
 
     if (approval.length === 0) {
       return res.status(404).json({ success: false, message: "Seller approval record not found for this order" });
-    }
-
-    const allApprovals = await sql`
-      SELECT approval_status
-      FROM Order_Seller_Approval
-      WHERE order_id = ${id}
-    `;
-
-    const hasRejected = allApprovals.some((row) => row.approval_status === 'REJECTED');
-    const allConfirmed = allApprovals.length > 0 && allApprovals.every((row) => row.approval_status === 'CONFIRMED');
-
-    if (hasRejected) {
-      await sql`
-        UPDATE Orders
-        SET order_status = 'REJECTED'
-        WHERE order_id = ${id}
-      `;
-    } else if (allConfirmed) {
-      try {
-        await reserveStockAndConfirmOrder(id);
-      } catch (confirmError) {
-        const rawMessage = String(confirmError?.message || "");
-        if (rawMessage.startsWith("INSUFFICIENT_STOCK:")) {
-          return res.status(409).json({
-            success: false,
-            message: "Insufficient stock while finalizing this order.",
-          });
-        }
-
-        if (rawMessage === "ORDER_NOT_FOUND") {
-          return res.status(404).json({ success: false, message: "Order not found" });
-        }
-
-        throw confirmError;
-      }
-    } else {
-      await sql`
-        UPDATE Orders
-        SET order_status = 'PENDING'
-        WHERE order_id = ${id}
-      `;
     }
 
     const orderRows = await sql`

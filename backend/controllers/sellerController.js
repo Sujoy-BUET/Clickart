@@ -64,9 +64,19 @@ export const authenticateSeller = async (req, res) => {
 export const getSellers = async (req, res) => {
   try {
     const sellers = await sql`
-      SELECT seller_id, seller_name, store_name, store_description,
-             seller_since, is_verified
-      FROM Sellers
+      SELECT s.seller_id, s.seller_name, s.store_name, s.store_description,
+             s.seller_since, s.is_verified,
+             COALESCE(rs.review_count, 0)::INT AS review_count,
+             COALESCE(rs.average_rating, 0)::NUMERIC(10,2) AS average_rating
+      FROM Sellers s
+      LEFT JOIN (
+        SELECT rsv.seller_id,
+               COUNT(r.review_id) AS review_count,
+               AVG(r.rating) AS average_rating
+        FROM Review_Seller rsv
+        JOIN Review r ON rsv.review_id = r.review_id
+        GROUP BY rsv.seller_id
+      ) rs ON rs.seller_id = s.seller_id
       ORDER BY seller_id DESC
     `;
     res.status(200).json({ success: true, data: sellers });
@@ -82,9 +92,20 @@ export const getSeller = async (req, res) => {
 
   try {
     const seller = await sql`
-      SELECT seller_id, seller_name, store_name, store_description,
-             seller_since, is_verified
-      FROM Sellers WHERE seller_id = ${id}
+      SELECT s.seller_id, s.seller_name, s.store_name, s.store_description,
+             s.seller_since, s.is_verified,
+             COALESCE(rs.review_count, 0)::INT AS review_count,
+             COALESCE(rs.average_rating, 0)::NUMERIC(10,2) AS average_rating
+      FROM Sellers s
+      LEFT JOIN (
+        SELECT rsv.seller_id,
+               COUNT(r.review_id) AS review_count,
+               AVG(r.rating) AS average_rating
+        FROM Review_Seller rsv
+        JOIN Review r ON rsv.review_id = r.review_id
+        GROUP BY rsv.seller_id
+      ) rs ON rs.seller_id = s.seller_id
+      WHERE s.seller_id = ${id}
     `;
 
     if (seller.length === 0) {
@@ -416,7 +437,7 @@ export const getSellerSalesSummary = async (req, res) => {
       JOIN Product p ON pv.product_id = p.product_id
       JOIN Orders o ON oi.order_id = o.order_id
       WHERE p.seller_id = ${id}
-        AND o.order_status <> 'CANCELLED'
+        AND o.order_status IN ('DELIVERED', 'SUCCESSFUL')
     `;
 
     const salesHistory = await sql`
@@ -437,7 +458,7 @@ export const getSellerSalesSummary = async (req, res) => {
       JOIN Product p ON pv.product_id = p.product_id
       JOIN Orders o ON oi.order_id = o.order_id
       WHERE p.seller_id = ${id}
-        AND o.order_status <> 'CANCELLED'
+        AND o.order_status IN ('DELIVERED', 'SUCCESSFUL')
       ORDER BY o.order_date DESC, oi.order_item_id DESC
       LIMIT 200
     `;
@@ -456,7 +477,7 @@ export const getSellerSalesSummary = async (req, res) => {
       JOIN Product p ON pv.product_id = p.product_id
       JOIN Orders o ON oi.order_id = o.order_id
       WHERE p.seller_id = ${id}
-        AND o.order_status <> 'CANCELLED'
+        AND o.order_status IN ('DELIVERED', 'SUCCESSFUL')
       GROUP BY
         EXTRACT(YEAR FROM o.order_date),
         EXTRACT(MONTH FROM o.order_date),

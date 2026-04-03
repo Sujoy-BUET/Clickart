@@ -51,8 +51,8 @@ export default function ProductListPage() {
       );
     }
 
-    if (sortBy === 'price-asc')  result.sort((a, b) => Number(a.price) - Number(b.price));
-    if (sortBy === 'price-desc') result.sort((a, b) => Number(b.price) - Number(a.price));
+    if (sortBy === 'price-asc')  result.sort((a, b) => Number(a.display_price ?? a.price) - Number(b.display_price ?? b.price));
+    if (sortBy === 'price-desc') result.sort((a, b) => Number(b.display_price ?? b.price) - Number(a.display_price ?? a.price));
     if (sortBy === 'name')       result.sort((a, b) => a.product_name.localeCompare(b.product_name));
 
     setFiltered(result);

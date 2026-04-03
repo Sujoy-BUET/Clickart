@@ -15,6 +15,7 @@ export default function Navbar() {
     { to: '/products', label: 'Products', icon: Package },
     { to: '/sellers', label: 'Sellers', icon: Store },
     { to: '/admin/dashboard', label: 'Admin Dashboard', icon: Store },
+    { to: '/admin/profile', label: 'Update Profile', icon: User },
   ] : isSeller() ? [
     { to: '/',         label: 'Home',      icon: Home },
     { to: '/products', label: 'Products',  icon: Package },

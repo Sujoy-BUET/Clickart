@@ -8,8 +8,8 @@ export default function AdminLoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  const [adminName, setAdminName] = useState('admin');
-  const [password, setPassword] = useState('admin');
+  const [adminName, setAdminName] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,9 @@ export default function AdminLoginPage() {
       if (response.success) {
         login({
           type: 'admin',
-          admin_name: adminName,
+          admin_name: response?.data?.admin_name || adminName,
+          admin_email: response?.data?.admin_email || '',
+          admin_phone: response?.data?.admin_phone || '',
           admin_token: response?.data?.token || '',
           role: 'central-admin',
         });
@@ -51,7 +53,6 @@ export default function AdminLoginPage() {
             <ShieldCheck className="h-8 w-8" />
           </div>
           <h1 className="text-3xl font-bold">Central Admin Login</h1>
-          <p className="mt-2 text-sm text-gray-500">Use admin credentials to verify or remove sellers</p>
         </div>
 
         <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 space-y-5">
@@ -69,6 +70,7 @@ export default function AdminLoginPage() {
               value={adminName}
               onChange={(e) => setAdminName(e.target.value)}
               placeholder="admin"
+              autoComplete="off"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
             />
           </div>
@@ -82,6 +84,7 @@ export default function AdminLoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="admin"
+                autoComplete="new-password"
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 pr-10 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
               />
               <button

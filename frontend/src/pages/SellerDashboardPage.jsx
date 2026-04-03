@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { createProduct, deleteProduct, getSeller, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
+import { createProduct, createSellerReview, deleteProduct, getProduct, getSeller, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -15,10 +15,27 @@ const resolveProductImage = (value) => {
   return `/${raw}`;
 };
 
+const toInitCap = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  return trimmed
+    .split(/\s+/)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const toObjectArray = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => isPlainObject(item));
+};
+
 export default function SellerDashboardPage() {
   const { sellerId } = useParams();
   const navigate = useNavigate();
-  const { user, isSeller, isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const [seller, setSeller] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [products, setProducts] = useState([]);
@@ -38,6 +55,11 @@ export default function SellerDashboardPage() {
   const [actionSuccess, setActionSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [orderActionLoading, setOrderActionLoading] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    rating: '5',
+    comment: '',
+  });
   const [editingProductId, setEditingProductId] = useState(null);
   const [showProductForm, setShowProductForm] = useState(false);
   const [categoryOptions, setCategoryOptions] = useState([]);
@@ -50,19 +72,25 @@ export default function SellerDashboardPage() {
     product_image: '',
     category_id: '',
     category_name: '',
-    useCustomCategory: false,
+    category_input: '',
     brand_id: '',
+    brand_name: '',
+    brand_input: '',
     variations: [],
   });
 
+  const isAuthenticatedUser = Boolean(user);
+  const isSellerUser = Boolean(user?.seller_id);
+
   // Determine which seller to show
-  const targetSellerId = sellerId || (isSeller() ? user?.seller_id : null);
+  const targetSellerId = sellerId || (isSellerUser ? user?.seller_id : null);
+  const isOwnDashboard = isSellerUser && Number(targetSellerId) === Number(user?.seller_id);
 
   const buildCategoryAndBrandOptions = (allProducts) => {
     const categoryMap = new Map();
     const brandMap = new Map();
 
-    allProducts.forEach((item) => {
+    toObjectArray(allProducts).forEach((item) => {
       if (item.category_id) {
         categoryMap.set(item.category_id, {
           category_id: item.category_id,
@@ -84,14 +112,20 @@ export default function SellerDashboardPage() {
 
   const refreshSellerProducts = useCallback(async () => {
     const all = await getProducts().catch(() => []);
-    const allProducts = Array.isArray(all) ? all : [];
+    const allProducts = toObjectArray(all);
     setProducts(allProducts.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
     buildCategoryAndBrandOptions(allProducts);
   }, [targetSellerId]);
 
   const refreshSellerOrders = useCallback(async () => {
     const orders = await getSellerOrders(targetSellerId).catch(() => []);
-    setSellerOrders(Array.isArray(orders) ? orders : []);
+    setSellerOrders(toObjectArray(orders));
+  }, [targetSellerId]);
+
+  const loadSellerReviews = useCallback(async () => {
+    const reviewRows = await getSellerReviews(targetSellerId).catch(() => []);
+    const reviewPayload = Array.isArray(reviewRows) ? reviewRows : (Array.isArray(reviewRows?.data) ? reviewRows.data : []);
+    setReviews(toObjectArray(reviewPayload));
   }, [targetSellerId]);
 
   const resetProductForm = () => {
@@ -103,8 +137,10 @@ export default function SellerDashboardPage() {
       product_image: '',
       category_id: '',
       category_name: '',
-      useCustomCategory: false,
+      category_input: '',
       brand_id: '',
+      brand_name: '',
+      brand_input: '',
       variations: [],
     });
   };
@@ -117,23 +153,42 @@ export default function SellerDashboardPage() {
     setShowProductForm(true);
   };
 
-  const openEditProductForm = (product) => {
+  const openEditProductForm = async (product) => {
     setActionError('');
     setActionSuccess('');
-    setEditingProductId(product.product_id);
-    setProductForm({
-      product_name: product.product_name || '',
-      description: product.description || '',
-      price: product.price ?? '',
-      stock_quantity: product.stock_quantity ?? '',
-      product_image: product.product_image || '',
-      category_id: product.category_id ?? '',
-      category_name: '',
-      useCustomCategory: false,
-      brand_id: product.brand_id ?? '',
-      variations: [],
-    });
-    setShowProductForm(true);
+
+    setSubmitting(true);
+    try {
+      const details = await getProduct(product.product_id);
+      const safeProduct = details || product;
+      const safeVariations = Array.isArray(safeProduct.variations) ? safeProduct.variations : [];
+
+      setEditingProductId(safeProduct.product_id);
+      setProductForm({
+        product_name: safeProduct.product_name || '',
+        description: safeProduct.description || '',
+        price: safeProduct.price ?? '',
+        stock_quantity: safeProduct.stock_quantity ?? '',
+        product_image: safeProduct.product_image || '',
+        category_id: safeProduct.category_id ?? '',
+        category_name: '',
+        category_input: safeProduct.category_name || '',
+        brand_id: safeProduct.brand_id ?? '',
+        brand_name: '',
+        brand_input: safeProduct.brand_name || '',
+        variations: safeVariations.map((variation) => ({
+          variation_type: variation.variation_type || '',
+          variation_value: variation.variation_value || '',
+          price: variation.price ?? '',
+          stock_quantity: variation.stock_quantity ?? '',
+        })),
+      });
+      setShowProductForm(true);
+    } catch (err) {
+      setActionError(err?.message || 'Failed to load product details for edit.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const closeProductForm = () => {
@@ -144,6 +199,72 @@ export default function SellerDashboardPage() {
 
   const handleProductFormChange = (field, value) => {
     setProductForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const matchSuggestion = (inputValue, options, nameKey) => {
+    const normalized = String(inputValue || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return options.find((option) => String(option[nameKey] || '').trim().toLowerCase() === normalized) || null;
+  };
+
+  const handleCategoryInputChange = (value) => {
+    const matched = matchSuggestion(value, categoryOptions, 'category_name');
+    if (matched) {
+      setProductForm((prev) => ({
+        ...prev,
+        category_input: matched.category_name,
+        category_id: matched.category_id,
+        category_name: '',
+      }));
+      return;
+    }
+
+    setProductForm((prev) => ({
+      ...prev,
+      category_input: value,
+      category_id: '',
+      category_name: value,
+    }));
+  };
+
+  const handleBrandInputChange = (value) => {
+    const matched = matchSuggestion(value, brandOptions, 'brand_name');
+    if (matched) {
+      setProductForm((prev) => ({
+        ...prev,
+        brand_input: matched.brand_name,
+        brand_id: matched.brand_id,
+        brand_name: '',
+      }));
+      return;
+    }
+
+    setProductForm((prev) => ({
+      ...prev,
+      brand_input: value,
+      brand_id: '',
+      brand_name: value,
+    }));
+  };
+
+  const normalizeAutocompleteInputs = () => {
+    setProductForm((prev) => {
+      const next = { ...prev };
+
+      if (!next.category_id && String(next.category_input || '').trim()) {
+        const formattedCategory = toInitCap(next.category_input);
+        next.category_input = formattedCategory;
+        next.category_name = formattedCategory;
+      }
+
+      if (!next.brand_id && String(next.brand_input || '').trim()) {
+        const formattedBrand = toInitCap(next.brand_input);
+        next.brand_input = formattedBrand;
+        next.brand_name = formattedBrand;
+      }
+
+      return next;
+    });
   };
 
   const handleProductSubmit = async (e) => {
@@ -157,18 +278,16 @@ export default function SellerDashboardPage() {
       return;
     }
 
-    if (!productForm.brand_id) {
-      setActionError('Please select brand.');
+    const normalizedCategoryName = toInitCap(productForm.category_name || productForm.category_input);
+    const normalizedBrandName = toInitCap(productForm.brand_name || productForm.brand_input);
+
+    if (!productForm.brand_id && !normalizedBrandName) {
+      setActionError('Please select or enter a brand.');
       return;
     }
 
-    if (!productForm.useCustomCategory && !productForm.category_id) {
-      setActionError('Please select a category.');
-      return;
-    }
-
-    if (productForm.useCustomCategory && !String(productForm.category_name).trim()) {
-      setActionError('Please enter a custom category name.');
+    if (!productForm.category_id && !normalizedCategoryName) {
+      setActionError('Please select or enter a category.');
       return;
     }
 
@@ -178,16 +297,25 @@ export default function SellerDashboardPage() {
       price: Number(productForm.price),
       stock_quantity: productForm.stock_quantity === '' ? 0 : Number(productForm.stock_quantity),
       product_image: String(productForm.product_image).trim() || null,
-      brand_id: Number(productForm.brand_id),
     };
 
-    if (productForm.useCustomCategory) {
-      payload.category_name = String(productForm.category_name).trim();
+    if (productForm.brand_id) {
+      payload.brand_id = Number(productForm.brand_id);
     } else {
-      payload.category_id = Number(productForm.category_id);
+      payload.brand_name = normalizedBrandName;
     }
 
-    if (Array.isArray(productForm.variations) && productForm.variations.length > 0) {
+    if (productForm.category_id) {
+      payload.category_id = Number(productForm.category_id);
+    } else {
+      payload.category_name = normalizedCategoryName;
+    }
+
+    const shouldSendVariations = editingProductId
+      ? Array.isArray(productForm.variations)
+      : (Array.isArray(productForm.variations) && productForm.variations.length > 0);
+
+    if (shouldSendVariations) {
       payload.variations = productForm.variations
         .filter((variation) => String(variation.variation_type || '').trim() && String(variation.variation_value || '').trim())
         .map((variation) => ({
@@ -293,13 +421,13 @@ export default function SellerDashboardPage() {
     setError('');
 
     // Redirect if not authenticated and accessing /seller/dashboard
-    if (!sellerId && !isAuthenticated()) {
+    if (!sellerId && !isAuthenticatedUser) {
       navigate('/seller/login');
       return;
     }
     
     // Redirect if not a seller and accessing /seller/dashboard
-    if (!sellerId && !isSeller()) {
+    if (!sellerId && !isSellerUser) {
       navigate('/login');
       return;
     }
@@ -309,21 +437,57 @@ export default function SellerDashboardPage() {
       return;
     }
 
-    setLoading(true);
-    Promise.all([
-      getSeller(targetSellerId),
-      getSellerReviews(targetSellerId).catch(() => []),
-      getProducts().catch(() => []),
-      getSellerSalesSummary(targetSellerId).catch(() => null),
-      getSellerOrders(targetSellerId).catch(() => []),
-    ])
-      .then(([s, r, p, sales, sellerOrderRows]) => {
-        setSeller(s.data || s);
-        setReviews(Array.isArray(r) ? r : (Array.isArray(r?.data) ? r.data : []));
-        const all = Array.isArray(p) ? p : [];
-        setProducts(all.filter((x) => Number(x.seller_id) === Number(targetSellerId)));
+    let active = true;
+
+    const loadDashboard = async () => {
+      setLoading(true);
+
+      try {
+        const sellerResponse = await getSeller(targetSellerId).catch(() => null);
+        if (!active) return;
+
+        const sellerPayload = isPlainObject(sellerResponse?.data)
+          ? sellerResponse.data
+          : (isPlainObject(sellerResponse) ? sellerResponse : null);
+
+        if (!sellerPayload || !sellerPayload.seller_id) {
+          setSeller(null);
+          setError('Seller not found.');
+          setLoading(false);
+          return;
+        }
+
+        setSeller(sellerPayload);
+        setLoading(false);
+
+        const reviewsPromise = getSellerReviews(targetSellerId).catch(() => []);
+        const productsPromise = getProducts().catch(() => []);
+        const salesPromise = isOwnDashboard
+          ? getSellerSalesSummary(targetSellerId).catch(() => null)
+          : Promise.resolve(null);
+        const sellerOrdersPromise = isOwnDashboard
+          ? getSellerOrders(targetSellerId).catch(() => [])
+          : Promise.resolve([]);
+
+        const [r, p, sales, sellerOrderRows] = await Promise.all([
+          reviewsPromise,
+          productsPromise,
+          salesPromise,
+          sellerOrdersPromise,
+        ]);
+
+        if (!active) return;
+
+        const reviewPayload = Array.isArray(r) ? r : (Array.isArray(r?.data) ? r.data : []);
+        setReviews(toObjectArray(reviewPayload));
+
+        const all = toObjectArray(p);
+        const sellerProducts = all.filter((x) => Number(x.seller_id) === Number(targetSellerId));
+        setProducts(sellerProducts);
         buildCategoryAndBrandOptions(all);
-        setSellerOrders(Array.isArray(sellerOrderRows) ? sellerOrderRows : []);
+
+        setSellerOrders(toObjectArray(sellerOrderRows));
+
         if (sales) {
           setSalesSummary({
             total_units_sold: Number(sales.total_units_sold || 0),
@@ -333,15 +497,103 @@ export default function SellerDashboardPage() {
             monthly_breakdown: Array.isArray(sales.monthly_breakdown) ? sales.monthly_breakdown : [],
           });
         }
-      })
-      .catch(() => {
+      } catch {
+        if (!active) return;
+        setLoading(false);
         setError('Failed to load seller dashboard data.');
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      active = false;
+    };
+  }, [targetSellerId, sellerId, isAuthenticatedUser, isSellerUser, navigate, isOwnDashboard]);
+
+  const reviewFeed = useMemo(() => {
+    return toObjectArray(reviews).sort((a, b) => {
+      const aTime = a?.review_date ? new Date(a.review_date).getTime() : 0;
+      const bTime = b?.review_date ? new Date(b.review_date).getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [reviews]);
+
+  const averageSellerRating = useMemo(() => {
+    if (!reviewFeed.length) return 0;
+    const total = reviewFeed.reduce((sum, item) => sum + Number(item.rating || 0), 0);
+    return total / reviewFeed.length;
+  }, [reviewFeed]);
+
+  const canUserReviewSeller = Boolean(user?.user_id) && !isOwnDashboard;
+
+  const handleCreateSellerReview = async (e) => {
+    e.preventDefault();
+    if (!canUserReviewSeller) return;
+
+    setActionError('');
+    setActionSuccess('');
+    setReviewSubmitting(true);
+
+    try {
+      const response = await createSellerReview({
+        reviewer_user_id: Number(user.user_id),
+        seller_id: Number(targetSellerId),
+        rating: Number(reviewForm.rating),
+        comment: String(reviewForm.comment || '').trim(),
+      });
+
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to submit seller review.');
+        return;
+      }
+
+      setReviewForm({ rating: '5', comment: '' });
+      setActionSuccess('Seller review submitted successfully.');
+      await loadSellerReviews();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to submit seller review.');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
+  const tabs = isOwnDashboard
+    ? [
+      { key: 'products', label: 'Products', count: products.length },
+      { key: 'orders', label: 'Orders', count: sellerOrders.length },
+      { key: 'sales', label: 'Sales', count: salesSummary.sales_history.length },
+      { key: 'reviews', label: 'Reviews', count: reviewFeed.length },
+      { key: 'info', label: 'Info' },
+    ]
+    : [
+      { key: 'products', label: 'Products', count: products.length },
+      { key: 'reviews', label: 'Reviews', count: reviewFeed.length },
+      { key: 'info', label: 'Info' },
+    ];
+
+  useEffect(() => {
+    if (!tabs.some((item) => item.key === tab)) {
+      setTab('products');
+    }
+  }, [tab, tabs]);
+
+  const monthlyRows = Array.isArray(salesSummary?.monthly_breakdown) ? salesSummary.monthly_breakdown : [];
+
+  const monthlyOptions = Array.from(
+    new Map(
+      monthlyRows.map((row) => {
+        const key = `${row.year}-${String(row.month).padStart(2, '0')}`;
+        return [key, { key, label: row.month_year }];
       })
-      .finally(() => setLoading(false));
-  }, [targetSellerId, sellerId, isAuthenticated, isSeller, navigate]);
+    ).values()
+  );
+  const filteredMonthlyRows = selectedMonthKey === 'all'
+    ? monthlyRows
+    : monthlyRows.filter((row) => `${row.year}-${String(row.month).padStart(2, '0')}` === selectedMonthKey);
 
   if (loading) return <LoadingSpinner />;
-  
+
   if (!seller) {
     return (
       <div className="flex flex-col items-center justify-center min-h-96 space-y-4">
@@ -355,29 +607,6 @@ export default function SellerDashboardPage() {
     );
   }
 
-  const isOwnDashboard = isSeller() && Number(targetSellerId) === Number(user?.seller_id);
-
-  const tabs = [
-    { key: 'products', label: 'Products', count: products.length },
-    { key: 'orders', label: 'Orders', count: sellerOrders.length },
-    { key: 'sales', label: 'Sales', count: salesSummary.sales_history.length },
-    { key: 'reviews', label: 'Reviews', count: reviews.length },
-    { key: 'info', label: 'Info' },
-  ];
-
-  const monthlyOptions = Array.from(
-    new Map(
-      salesSummary.monthly_breakdown.map((row) => {
-        const key = `${row.year}-${String(row.month).padStart(2, '0')}`;
-        return [key, { key, label: row.month_year }];
-      })
-    ).values()
-  );
-
-  const filteredMonthlyRows = selectedMonthKey === 'all'
-    ? salesSummary.monthly_breakdown
-    : salesSummary.monthly_breakdown.filter((row) => `${row.year}-${String(row.month).padStart(2, '0')}` === selectedMonthKey);
-
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
       {error && (
@@ -386,13 +615,12 @@ export default function SellerDashboardPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start gap-6 mb-8">
+      <div className="mb-8 flex flex-col items-start gap-6 sm:flex-row">
         <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-3xl font-bold text-white shadow-lg shadow-violet-600/20">
           {seller.store_name?.[0] ?? 'S'}
         </div>
         <div className="flex-1">
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold">{seller.store_name}</h1>
             {seller.is_verified && (
               <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-400">
@@ -403,18 +631,17 @@ export default function SellerDashboardPage() {
           <p className="mt-1 text-sm text-gray-400">{seller.seller_name}</p>
           <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-500">
             <span className="flex items-center gap-1"><Package className="h-4 w-4" /> {products.length} products</span>
-            <span className="flex items-center gap-1"><Star className="h-4 w-4 text-amber-400" /> {reviews.length} reviews</span>
+            <span className="flex items-center gap-1"><Star className="h-4 w-4 text-amber-400" /> {reviewFeed.length > 0 ? `${averageSellerRating.toFixed(1)} (${reviewFeed.length})` : 'No ratings yet'}</span>
           </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-800 mb-8">
+      <div className="mb-8 flex gap-1 border-b border-gray-800">
         {tabs.map(({ key, label, count }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`px-4 py-3 text-sm font-medium transition border-b-2 -mb-px ${
+            className={`-mb-px border-b-2 px-4 py-3 text-sm font-medium transition ${
               tab === key
                 ? 'border-violet-500 text-violet-400'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -425,7 +652,6 @@ export default function SellerDashboardPage() {
         ))}
       </div>
 
-      {/* Products tab */}
       {tab === 'products' && (
         <div>
           {actionSuccess && (
@@ -440,12 +666,11 @@ export default function SellerDashboardPage() {
             </div>
           )}
 
-          {/* Add Product Button - only show on own dashboard */}
           {isOwnDashboard && (
             <div className="mb-6">
               <button
                 onClick={openCreateProductForm}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
+                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
               >
                 <Plus className="w-4 h-4" />
                 Add Product
@@ -454,7 +679,7 @@ export default function SellerDashboardPage() {
           )}
 
           {isOwnDashboard && showProductForm && (
-            <form onSubmit={handleProductSubmit} className="mb-6 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5 space-y-4">
+            <form onSubmit={handleProductSubmit} className="mb-6 space-y-4 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-gray-200">
                   {editingProductId ? 'Edit Product' : 'Create Product'}
@@ -462,7 +687,7 @@ export default function SellerDashboardPage() {
                 <button
                   type="button"
                   onClick={closeProductForm}
-                  className="text-xs text-gray-400 hover:text-gray-200 transition"
+                  className="text-xs text-gray-400 transition hover:text-gray-200"
                 >
                   Cancel
                 </button>
@@ -501,61 +726,35 @@ export default function SellerDashboardPage() {
                   placeholder="Image URL (optional)"
                   className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
                 />
-                {productForm.useCustomCategory ? (
-                  <input
-                    required
-                    value={productForm.category_name}
-                    onChange={(e) => handleProductFormChange('category_name', e.target.value)}
-                    placeholder="Custom category (e.g. Kitchen Tools)"
-                    className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
-                  />
-                ) : (
-                  <select
-                    required
-                    value={productForm.category_id}
-                    onChange={(e) => handleProductFormChange('category_id', e.target.value)}
-                    className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
-                  >
-                    <option value="">Select category</option>
-                    {categoryOptions.map((option) => (
-                      <option key={option.category_id} value={option.category_id}>
-                        {option.category_name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <select
-                  required
-                  value={productForm.brand_id}
-                  onChange={(e) => handleProductFormChange('brand_id', e.target.value)}
-                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
-                >
-                  <option value="">Select brand</option>
-                  {brandOptions.map((option) => (
-                    <option key={option.brand_id} value={option.brand_id}>
-                      {option.brand_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <label className="mt-1 inline-flex items-center gap-2 text-xs text-gray-400">
                 <input
-                  type="checkbox"
-                  checked={productForm.useCustomCategory}
-                  onChange={(e) => {
-                    const useCustomCategory = e.target.checked;
-                    setProductForm((prev) => ({
-                      ...prev,
-                      useCustomCategory,
-                      category_id: useCustomCategory ? '' : prev.category_id,
-                      category_name: useCustomCategory ? prev.category_name : '',
-                    }));
-                  }}
-                  className="h-3.5 w-3.5 rounded border-gray-600 bg-gray-800"
+                  required
+                  list="seller-category-options"
+                  value={productForm.category_input}
+                  onChange={(e) => handleCategoryInputChange(e.target.value)}
+                  onBlur={normalizeAutocompleteInputs}
+                  placeholder="Search or type category"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
                 />
-                Type custom category
-              </label>
+                <datalist id="seller-category-options">
+                  {categoryOptions.map((option) => (
+                    <option key={option.category_id} value={option.category_name} />
+                  ))}
+                </datalist>
+                <input
+                  required
+                  list="seller-brand-options"
+                  value={productForm.brand_input}
+                  onChange={(e) => handleBrandInputChange(e.target.value)}
+                  onBlur={normalizeAutocompleteInputs}
+                  placeholder="Search or type brand"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <datalist id="seller-brand-options">
+                  {brandOptions.map((option) => (
+                    <option key={option.brand_id} value={option.brand_name} />
+                  ))}
+                </datalist>
+              </div>
 
               <textarea
                 value={productForm.description}
@@ -656,18 +855,13 @@ export default function SellerDashboardPage() {
               </button>
             </form>
           )}
-          
+
           {products.length === 0 ? (
-            <div className="text-center py-10">
-              <Package className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <div className="py-10 text-center">
+              <Package className="mx-auto mb-3 h-12 w-12 text-gray-400" />
               <p className="text-gray-500">
-                {isOwnDashboard ? "You haven't listed any products yet." : "No products listed yet."}
+                {isOwnDashboard ? "You haven't listed any products yet." : 'No products listed yet.'}
               </p>
-              {isOwnDashboard && (
-                <button className="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition">
-                  List Your First Product
-                </button>
-              )}
             </div>
           ) : (
             <div className="space-y-3">
@@ -688,8 +882,8 @@ export default function SellerDashboardPage() {
                       }}
                     />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <Link to={`/products/${p.product_id}`} className="text-sm font-semibold text-gray-100 hover:text-violet-400 transition truncate block">
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/products/${p.product_id}`} className="block truncate text-sm font-semibold text-gray-100 transition hover:text-violet-400">
                       {p.product_name}
                     </Link>
                     <p className="text-xs text-gray-500">{p.brand_name} · {p.category_name}</p>
@@ -698,10 +892,10 @@ export default function SellerDashboardPage() {
                     <span className="text-sm font-bold text-violet-400">৳{Number(p.price).toLocaleString('en-BD')}</span>
                     {isOwnDashboard && (
                       <div className="flex gap-1">
-                        <button onClick={() => openEditProductForm(p)} className="p-1 text-gray-400 hover:text-blue-400 transition">
+                        <button onClick={() => openEditProductForm(p)} className="p-1 text-gray-400 transition hover:text-blue-400">
                           <Edit className="w-4 h-4" />
                         </button>
-                        <button onClick={() => handleDeleteProduct(p.product_id)} className="p-1 text-gray-400 hover:text-red-400 transition">
+                        <button onClick={() => handleDeleteProduct(p.product_id)} className="p-1 text-gray-400 transition hover:text-red-400">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -714,8 +908,7 @@ export default function SellerDashboardPage() {
         </div>
       )}
 
-      {/* Reviews tab */}
-      {tab === 'sales' && (
+      {tab === 'sales' && isOwnDashboard && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
@@ -821,8 +1014,7 @@ export default function SellerDashboardPage() {
         </div>
       )}
 
-      {/* Reviews tab */}
-      {tab === 'orders' && (
+      {tab === 'orders' && isOwnDashboard && (
         <div>
           {actionSuccess && (
             <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
@@ -895,23 +1087,71 @@ export default function SellerDashboardPage() {
         </div>
       )}
 
-      {/* Reviews tab */}
       {tab === 'reviews' && (
         <div>
-          {reviews.length === 0 ? (
+          {canUserReviewSeller && (
+            <form onSubmit={handleCreateSellerReview} className="mb-5 rounded-xl border border-gray-800 bg-gray-900 p-4">
+              <p className="mb-3 text-sm font-semibold text-gray-200">Rate this shop</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[140px_1fr_auto]">
+                <select
+                  value={reviewForm.rating}
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, rating: e.target.value }))}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500"
+                >
+                  <option value="5">5 - Excellent</option>
+                  <option value="4">4 - Good</option>
+                  <option value="3">3 - Average</option>
+                  <option value="2">2 - Poor</option>
+                  <option value="1">1 - Very Poor</option>
+                </select>
+                <input
+                  value={reviewForm.comment}
+                  onChange={(e) => setReviewForm((prev) => ({ ...prev, comment: e.target.value }))}
+                  placeholder="Write your review (optional)"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500"
+                />
+                <button
+                  type="submit"
+                  disabled={reviewSubmitting}
+                  className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                >
+                  {reviewSubmitting ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {actionSuccess && tab === 'reviews' && (
+            <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+              {actionSuccess}
+            </div>
+          )}
+
+          {actionError && tab === 'reviews' && (
+            <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {actionError}
+            </div>
+          )}
+
+          {reviewFeed.length === 0 ? (
             <p className="text-center text-sm text-gray-600 py-10">No reviews yet.</p>
           ) : (
             <div className="space-y-4">
-              {reviews.map((r, i) => (
+              {reviewFeed.map((r, i) => (
                 <div key={r.review_id ?? i} className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-                  <div className="flex items-center justify-between mb-2">
-                    <StarRating rating={r.rating} size={14} />
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <StarRating rating={r.rating} size={14} />
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">Seller Review</span>
+                    </div>
                     <span className="text-xs text-gray-600">{r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</span>
                   </div>
-                  <p className="text-sm text-gray-300">{r.comment}</p>
+
                   {(r.reviewer_name || r.reviewer_user_id) && (
-                    <p className="mt-2 text-xs text-gray-500">— {r.reviewer_name || `User #${r.reviewer_user_id}`}</p>
+                    <p className="mb-2 text-xs text-gray-500">By: {r.reviewer_name || `User #${r.reviewer_user_id}`}</p>
                   )}
+
+                  <p className="text-sm text-gray-300">{String(r.comment || '').trim() || 'No written review.'}</p>
                 </div>
               ))}
             </div>
@@ -919,11 +1159,10 @@ export default function SellerDashboardPage() {
         </div>
       )}
 
-      {/* Info tab */}
       {tab === 'info' && (
         <div className="space-y-4">
           {/* Emails */}
-          {seller.emails?.length > 0 && (
+          {Array.isArray(seller.emails) && seller.emails.length > 0 && (
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3"><Mail className="h-4 w-4 text-violet-400" /> Email Addresses</h3>
               <div className="space-y-1">
@@ -935,7 +1174,7 @@ export default function SellerDashboardPage() {
           )}
 
           {/* Phones */}
-          {seller.phones?.length > 0 && (
+          {Array.isArray(seller.phones) && seller.phones.length > 0 && (
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3"><Phone className="h-4 w-4 text-violet-400" /> Phone Numbers</h3>
               <div className="space-y-1">
@@ -947,7 +1186,7 @@ export default function SellerDashboardPage() {
           )}
 
           {/* Addresses */}
-          {seller.addresses?.length > 0 && (
+          {Array.isArray(seller.addresses) && seller.addresses.length > 0 && (
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3"><MapPin className="h-4 w-4 text-violet-400" /> Addresses</h3>
               <div className="space-y-2">
