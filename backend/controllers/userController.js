@@ -150,20 +150,31 @@ export const createUser = async (req, res) => {
       RETURNING user_id, user_name
     `;
     const user_id = newUser[0]?.user_id;
-    // Add email and phone if provided
-    if (user_id && normalizedEmail) {
-      await sql`
-        INSERT INTO User_Email (user_id, email)
-        VALUES (${user_id}, ${normalizedEmail})
-        ON CONFLICT DO NOTHING
-      `;
-    }
-    if (user_id && normalizedPhone) {
-      await sql`
-        INSERT INTO User_Phone (user_id, phone_number)
-        VALUES (${user_id}, ${normalizedPhone})
-        ON CONFLICT DO NOTHING
-      `;
+    // Add optional email/phone through a single DB procedure call.
+    if (user_id) {
+      try {
+        await sql`CALL proc_upsert_user_contacts(${user_id}, ${normalizedEmail || null}, ${normalizedPhone || null})`;
+      } catch (callError) {
+        if (String(callError?.code || '') !== '42883') {
+          throw callError;
+        }
+
+        if (normalizedEmail) {
+          await sql`
+            INSERT INTO User_Email (user_id, email)
+            VALUES (${user_id}, ${normalizedEmail})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+
+        if (normalizedPhone) {
+          await sql`
+            INSERT INTO User_Phone (user_id, phone_number)
+            VALUES (${user_id}, ${normalizedPhone})
+            ON CONFLICT DO NOTHING
+          `;
+        }
+      }
     }
     res.status(201).json({ success: true, data: newUser[0] });
   } catch (error) {

@@ -181,6 +181,9 @@ export default function OrdersPage() {
                               {item.variation_type || 'Variation'}: {item.variation_value || '-'}
                             </p>
                           )}
+                          {item.seller_store_name && (
+                            <p className="text-xs text-gray-500">Sold by {item.seller_store_name}</p>
+                          )}
                         </div>
                         <div className="text-right text-sm">
                           <p className="text-gray-300">x{Number(item.quantity || 0)}</p>

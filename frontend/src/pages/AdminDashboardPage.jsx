@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Trash2, ShieldAlert, PackageCheck, XCircle } from 'lucide-react';
-import { adminDeleteSeller, adminVerifySeller, getOrders, getSellers, updateOrderStatus } from '../api';
+import { adminDeleteSeller, adminVerifySeller, getOrder, getOrders, getSellers, updateOrderStatus } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 export default function AdminDashboardPage() {
@@ -16,6 +16,9 @@ export default function AdminDashboardPage() {
   const [orders, setOrders] = useState([]);
   const [orderActionBusyId, setOrderActionBusyId] = useState(null);
   const [orderActionError, setOrderActionError] = useState('');
+  const [expandedOrderId, setExpandedOrderId] = useState(null);
+  const [orderDetailsById, setOrderDetailsById] = useState({});
+  const [orderDetailsLoadingId, setOrderDetailsLoadingId] = useState(null);
 
   const token = user?.admin_token || '';
 
@@ -116,6 +119,32 @@ export default function AdminDashboardPage() {
       setError(err.message || 'Failed to delete seller');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const handleToggleOrderDetails = async (orderId) => {
+    const numericOrderId = Number(orderId);
+    if (!numericOrderId) return;
+
+    if (expandedOrderId === numericOrderId) {
+      setExpandedOrderId(null);
+      return;
+    }
+
+    setExpandedOrderId(numericOrderId);
+
+    if (orderDetailsById[numericOrderId]) {
+      return;
+    }
+
+    setOrderDetailsLoadingId(numericOrderId);
+    try {
+      const details = await getOrder(numericOrderId);
+      setOrderDetailsById((prev) => ({ ...prev, [numericOrderId]: details || null }));
+    } catch {
+      setOrderDetailsById((prev) => ({ ...prev, [numericOrderId]: null }));
+    } finally {
+      setOrderDetailsLoadingId(null);
     }
   };
 
@@ -230,37 +259,78 @@ export default function AdminDashboardPage() {
                 : `User ID: ${order.user_id}`;
 
               return (
-                <div key={order.order_id} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="font-medium text-gray-100">Order #{order.order_id}</p>
-                    <p className="text-sm text-gray-400">{userLabel} • {order.order_date ? new Date(order.order_date).toLocaleString() : '-'}</p>
-                    <p className="mt-1 text-xs text-gray-500">Total: ৳{Number(order.total_amount || 0).toLocaleString('en-BD')}</p>
-                    <p className="mt-1 text-xs">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 ${status === 'DELIVERED' || status === 'SUCCESSFUL' ? 'bg-emerald-500/10 text-emerald-300' : status === 'REJECTED' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
-                        <PackageCheck className="h-3.5 w-3.5" />
-                        {status || 'PENDING'}
-                      </span>
-                    </p>
+                <div key={order.order_id} className="px-5 py-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-gray-100">Order #{order.order_id}</p>
+                      <p className="text-sm text-gray-400">{userLabel} • {order.order_date ? new Date(order.order_date).toLocaleString() : '-'}</p>
+                      <p className="mt-1 text-xs text-gray-500">Total: ৳{Number(order.total_amount || 0).toLocaleString('en-BD')}</p>
+                      <p className="mt-1 text-xs">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 ${status === 'DELIVERED' || status === 'SUCCESSFUL' ? 'bg-emerald-500/10 text-emerald-300' : status === 'REJECTED' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
+                          <PackageCheck className="h-3.5 w-3.5" />
+                          {status || 'PENDING'}
+                        </span>
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleToggleOrderDetails(order.order_id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800"
+                      >
+                        {expandedOrderId === order.order_id ? 'Hide Items' : 'View Items'}
+                      </button>
+                      <button
+                        onClick={() => handleOrderDecision(order.order_id, 'DELIVERED')}
+                        disabled={!canDecide || isBusy}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleOrderDecision(order.order_id, 'REJECTED')}
+                        disabled={!canDecide || isBusy}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleOrderDecision(order.order_id, 'DELIVERED')}
-                      disabled={!canDecide || isBusy}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => handleOrderDecision(order.order_id, 'REJECTED')}
-                      disabled={!canDecide || isBusy}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Reject
-                    </button>
-                  </div>
+                  {expandedOrderId === order.order_id && (
+                    <div className="mt-4 border-t border-gray-800 pt-4">
+                      {orderDetailsLoadingId === order.order_id ? (
+                        <p className="text-sm text-gray-500">Loading order items...</p>
+                      ) : Array.isArray(orderDetailsById[order.order_id]?.items) && orderDetailsById[order.order_id].items.length > 0 ? (
+                        <div className="space-y-2">
+                          {orderDetailsById[order.order_id].items.map((item, itemIdx) => (
+                            <div
+                              key={item.order_item_id ?? `${order.order_id}-${item.product_variation_id}-${itemIdx}`}
+                              className="flex items-center justify-between gap-3 rounded-lg bg-gray-800/60 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-gray-200">{item.product_name}</p>
+                                {(item.variation_type || item.variation_value) && (
+                                  <p className="text-xs text-gray-400">{item.variation_type || 'Variation'}: {item.variation_value || '-'}</p>
+                                )}
+                                {item.seller_store_name && (
+                                  <p className="text-xs text-gray-500">Sold by {item.seller_store_name}</p>
+                                )}
+                              </div>
+                              <div className="text-right text-sm">
+                                <p className="text-gray-300">x{Number(item.quantity || 0)}</p>
+                                <p className="font-semibold text-violet-300">৳{Number(item.unit_price || 0).toLocaleString('en-BD')}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500">Items are not available for this order.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

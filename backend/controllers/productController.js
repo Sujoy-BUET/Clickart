@@ -1,5 +1,23 @@
 import { sql } from "../config/db.js";
 
+const ARCHIVED_SELLER_NAME = "__archived_seller__";
+
+const getVerifiedSeller = async (sellerId) => {
+  const normalizedSellerId = Number(sellerId);
+  if (Number.isNaN(normalizedSellerId) || normalizedSellerId <= 0) {
+    return null;
+  }
+
+  const sellerRows = await sql`
+    SELECT seller_id, is_verified
+    FROM Sellers
+    WHERE seller_id = ${normalizedSellerId}
+    LIMIT 1
+  `;
+
+  return sellerRows[0] || null;
+};
+
 const resolveCategoryId = async ({ category_id, category_name }) => {
   if (category_id) {
     return Number(category_id);
@@ -223,7 +241,8 @@ export const getProducts = async (req, res) => {
           FROM Product_Variation pv
           GROUP BY pv.product_id
         ) vs ON vs.product_id = p.product_id
-        WHERE c.category_name ILIKE ${category} OR c.category_id::text = ${category}
+        WHERE (c.category_name ILIKE ${category} OR c.category_id::text = ${category})
+          AND s.seller_name <> ${ARCHIVED_SELLER_NAME}
         ORDER BY p.product_id DESC
       `;
     } else {
@@ -256,6 +275,7 @@ export const getProducts = async (req, res) => {
           FROM Product_Variation pv
           GROUP BY pv.product_id
         ) vs ON vs.product_id = p.product_id
+        WHERE s.seller_name <> ${ARCHIVED_SELLER_NAME}
         ORDER BY p.product_id DESC
       `;
     }
@@ -351,6 +371,15 @@ export const createProduct = async (req, res) => {
   }
 
   try {
+    const seller = await getVerifiedSeller(seller_id);
+    if (!seller) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    if (!seller.is_verified) {
+      return res.status(403).json({ success: false, message: "Seller is not verified. Product listing is blocked." });
+    }
+
     const resolvedCategoryId = await resolveCategoryId({ category_id, category_name });
     const resolvedBrandId = await resolveBrandId({ brand_id, brand_name });
     if (!resolvedCategoryId) {
@@ -447,6 +476,28 @@ export const updateProduct = async (req, res) => {
 
     if (hasSellerId && (Number.isNaN(normalizedSellerId) || normalizedSellerId <= 0)) {
       return res.status(400).json({ success: false, message: "Invalid seller_id" });
+    }
+
+    const targetSellerRows = await sql`
+      SELECT seller_id
+      FROM Product
+      WHERE product_id = ${id}
+      LIMIT 1
+    `;
+
+    if (targetSellerRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const targetSellerId = hasSellerId ? normalizedSellerId : Number(targetSellerRows[0].seller_id);
+    const seller = await getVerifiedSeller(targetSellerId);
+
+    if (!seller) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    if (!seller.is_verified) {
+      return res.status(403).json({ success: false, message: "Seller is not verified. Product update is blocked." });
     }
 
     let resolvedCategoryId = null;
@@ -568,6 +619,26 @@ export const addProductVariation = async (req, res) => {
   const { variation_id, variation_type, variation_value, price, stock_quantity } = req.body;
 
   try {
+    const sellerLookup = await sql`
+      SELECT p.seller_id
+      FROM Product p
+      WHERE p.product_id = ${id}
+      LIMIT 1
+    `;
+
+    if (sellerLookup.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const seller = await getVerifiedSeller(sellerLookup[0].seller_id);
+    if (!seller) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    if (!seller.is_verified) {
+      return res.status(403).json({ success: false, message: "Seller is not verified. Product variation update is blocked." });
+    }
+
     const resolvedVariationId = await resolveVariationId({ variation_id, variation_type, variation_value });
 
     if (!resolvedVariationId) {

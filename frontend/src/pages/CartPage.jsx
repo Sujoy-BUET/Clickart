@@ -140,6 +140,9 @@ export default function CartPage() {
                       {item.variation_type}: {item.variation_value}
                     </p>
                   )}
+                  {item.seller_store_name && (
+                    <p className="text-xs text-gray-500 mt-0.5">Sold by {item.seller_store_name}</p>
+                  )}
                   <p className="mt-0.5 text-xs text-gray-500">Stock: {Number(item.stock_quantity || 0)}</p>
                   <p className="mt-1 text-sm font-bold text-violet-400">৳{Number(item.price || 0).toLocaleString('en-BD')}</p>
                 </div>

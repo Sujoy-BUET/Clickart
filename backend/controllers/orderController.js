@@ -305,6 +305,7 @@ export const getOrder = async (req, res) => {
                      'quantity', oi.quantity,
                      'unit_price', oi.unit_price,
                      'product_name', oi.product_name,
+                     'seller_store_name', s.store_name,
                      'variation_type', oi.variation_type,
                      'variation_value', oi.variation_value,
                      'product_image', oi.product_image
@@ -313,6 +314,8 @@ export const getOrder = async (req, res) => {
                  )
                  FROM Order_Item oi
                  JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+                 LEFT JOIN Product p ON pv.product_id = p.product_id
+                 LEFT JOIN Sellers s ON p.seller_id = s.seller_id
                  WHERE oi.order_id = o.order_id
                ),
                (
@@ -324,6 +327,7 @@ export const getOrder = async (req, res) => {
                      'quantity', ct.quantity,
                      'unit_price', COALESCE(pv.price, p.price),
                      'product_name', p.product_name,
+                     'seller_store_name', s.store_name,
                      'variation_type', vt.variation_type_name,
                      'variation_value', v.variation_value,
                      'product_image', p.product_image
@@ -333,6 +337,7 @@ export const getOrder = async (req, res) => {
                  FROM Contains ct
                  JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
                  JOIN Product p ON pv.product_id = p.product_id
+                LEFT JOIN Sellers s ON p.seller_id = s.seller_id
                  LEFT JOIN Variation v ON pv.variation_id = v.variation_id
                  LEFT JOIN VariationType vt ON v.variation_type_id = vt.variation_type_id
                  WHERE ct.cart_id = o.cart_id
@@ -379,6 +384,7 @@ export const getUserOrders = async (req, res) => {
                      'quantity', oi.quantity,
                      'unit_price', oi.unit_price,
                      'product_name', oi.product_name,
+                     'seller_store_name', s.store_name,
                      'variation_type', oi.variation_type,
                      'variation_value', oi.variation_value,
                      'product_image', oi.product_image
@@ -387,6 +393,8 @@ export const getUserOrders = async (req, res) => {
                  )
                  FROM Order_Item oi
                  JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+                 LEFT JOIN Product p ON pv.product_id = p.product_id
+                 LEFT JOIN Sellers s ON p.seller_id = s.seller_id
                  WHERE oi.order_id = o.order_id
                ),
                (
@@ -398,6 +406,7 @@ export const getUserOrders = async (req, res) => {
                      'quantity', ct.quantity,
                      'unit_price', COALESCE(pv.price, p.price),
                      'product_name', p.product_name,
+                     'seller_store_name', s.store_name,
                      'variation_type', vt.variation_type_name,
                      'variation_value', v.variation_value,
                      'product_image', p.product_image
@@ -407,6 +416,7 @@ export const getUserOrders = async (req, res) => {
                  FROM Contains ct
                  JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
                  JOIN Product p ON pv.product_id = p.product_id
+                LEFT JOIN Sellers s ON p.seller_id = s.seller_id
                  LEFT JOIN Variation v ON pv.variation_id = v.variation_id
                  LEFT JOIN VariationType vt ON v.variation_type_id = vt.variation_type_id
                  WHERE ct.cart_id = o.cart_id
@@ -638,9 +648,11 @@ export const createOrder = async (req, res) => {
 
     const createdItems = await sql`
       SELECT oi.order_item_id, pv.product_id, oi.product_variation_id, oi.quantity, oi.unit_price,
-             product_name, variation_type, variation_value, product_image
+             product_name, s.store_name AS seller_store_name, variation_type, variation_value, product_image
       FROM Order_Item oi
       JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      LEFT JOIN Product p ON pv.product_id = p.product_id
+      LEFT JOIN Sellers s ON p.seller_id = s.seller_id
       WHERE oi.order_id = ${newOrder.order_id}
       ORDER BY oi.order_item_id ASC
     `;

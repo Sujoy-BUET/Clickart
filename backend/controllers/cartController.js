@@ -24,11 +24,13 @@ export const getCart = async (req, res) => {
              pv.price   AS price,
              pv.stock_quantity,
              p.product_id, p.product_name, p.product_image,
+             s.store_name AS seller_store_name,
              vt.variation_type_name AS variation_type, v.variation_value
       FROM Cart c
       LEFT JOIN Contains ct        ON c.cart_id                = ct.cart_id
       LEFT JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
       LEFT JOIN Product p          ON pv.product_id            = p.product_id
+      LEFT JOIN Sellers s          ON p.seller_id              = s.seller_id
       LEFT JOIN Variation v        ON pv.variation_id           = v.variation_id
       LEFT JOIN VariationType vt   ON v.variation_type_id       = vt.variation_type_id
       WHERE c.cart_id = ${id}

@@ -77,6 +77,7 @@ export const getSellers = async (req, res) => {
         JOIN Review r ON rsv.review_id = r.review_id
         GROUP BY rsv.seller_id
       ) rs ON rs.seller_id = s.seller_id
+      WHERE s.seller_name <> ${"__archived_seller__"}
       ORDER BY seller_id DESC
     `;
     res.status(200).json({ success: true, data: sellers });
@@ -277,10 +278,19 @@ export const addSellerEmail = async (req, res) => {
       return res.status(409).json({ success: false, message: "Email already registered" });
     }
 
-    await sql`
-      INSERT INTO Seller_Email (seller_id, email)
-      VALUES (${id}, ${normalizedEmail})
-    `;
+    try {
+      await sql`CALL proc_upsert_seller_contacts(${id}, ${normalizedEmail}, ${null})`;
+    } catch (callError) {
+      if (String(callError?.code || '') !== '42883') {
+        throw callError;
+      }
+
+      await sql`
+        INSERT INTO Seller_Email (seller_id, email)
+        VALUES (${id}, ${normalizedEmail})
+        ON CONFLICT DO NOTHING
+      `;
+    }
     res.status(201).json({ success: true, data: { seller_id: Number(id), email: normalizedEmail } });
   } catch (error) {
     const constraint = String(error?.constraint || error?.constraint_name || "");
@@ -318,10 +328,19 @@ export const addSellerPhone = async (req, res) => {
       return res.status(409).json({ success: false, message: "Phone number already registered" });
     }
 
-    await sql`
-      INSERT INTO Seller_Phone (seller_id, phone_number)
-      VALUES (${id}, ${normalizedPhone})
-    `;
+    try {
+      await sql`CALL proc_upsert_seller_contacts(${id}, ${null}, ${normalizedPhone})`;
+    } catch (callError) {
+      if (String(callError?.code || '') !== '42883') {
+        throw callError;
+      }
+
+      await sql`
+        INSERT INTO Seller_Phone (seller_id, phone_number)
+        VALUES (${id}, ${normalizedPhone})
+        ON CONFLICT DO NOTHING
+      `;
+    }
     res.status(201).json({ success: true, data: { seller_id: Number(id), phone_number: normalizedPhone } });
   } catch (error) {
     const constraint = String(error?.constraint || error?.constraint_name || "");

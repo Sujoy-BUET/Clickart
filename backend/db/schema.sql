@@ -278,3 +278,173 @@ CREATE TABLE IF NOT EXISTS Review_Seller (
     FOREIGN KEY (review_id) REFERENCES Review(review_id),
     FOREIGN KEY (seller_id) REFERENCES Sellers(seller_id)
 );
+
+-- ===================== COMPUTED SQL FUNCTIONS =====================
+
+DROP FUNCTION IF EXISTS fn_seller_order_history_count(INT);
+CREATE FUNCTION fn_seller_order_history_count(p_seller_id INT)
+RETURNS INT
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT COUNT(*)::INT
+    FROM Order_Item oi
+    JOIN Product_Variation pv ON pv.product_variation_id = oi.product_variation_id
+    JOIN Product p ON p.product_id = pv.product_id
+    WHERE p.seller_id = p_seller_id;
+$$;
+
+DROP FUNCTION IF EXISTS fn_seller_active_order_count(INT);
+CREATE FUNCTION fn_seller_active_order_count(p_seller_id INT)
+RETURNS INT
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT COUNT(DISTINCT o.order_id)::INT
+    FROM Orders o
+    JOIN Order_Item oi ON oi.order_id = o.order_id
+    JOIN Product_Variation pv ON pv.product_variation_id = oi.product_variation_id
+    JOIN Product p ON p.product_id = pv.product_id
+    WHERE p.seller_id = p_seller_id
+      AND UPPER(COALESCE(o.order_status, '')) NOT IN ('DELIVERED', 'CANCELLED', 'REJECTED', 'SUCCESSFUL');
+$$;
+
+-- ===================== SIMPLE SQL PROCEDURES =====================
+
+DROP PROCEDURE IF EXISTS proc_upsert_seller_contacts(INT, VARCHAR, VARCHAR);
+CREATE PROCEDURE proc_upsert_seller_contacts(
+    IN p_seller_id INT,
+    IN p_email VARCHAR(100),
+    IN p_phone VARCHAR(20)
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_email IS NOT NULL AND LENGTH(TRIM(p_email)) > 0 THEN
+        INSERT INTO Seller_Email (seller_id, email)
+        VALUES (p_seller_id, TRIM(p_email))
+        ON CONFLICT DO NOTHING;
+    END IF;
+
+    IF p_phone IS NOT NULL AND LENGTH(TRIM(p_phone)) > 0 THEN
+        INSERT INTO Seller_Phone (seller_id, phone_number)
+        VALUES (p_seller_id, TRIM(p_phone))
+        ON CONFLICT DO NOTHING;
+    END IF;
+END;
+$$;
+
+DROP PROCEDURE IF EXISTS proc_upsert_user_contacts(INT, VARCHAR, VARCHAR);
+CREATE PROCEDURE proc_upsert_user_contacts(
+    IN p_user_id INT,
+    IN p_email VARCHAR(100),
+    IN p_phone VARCHAR(20)
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF p_email IS NOT NULL AND LENGTH(TRIM(p_email)) > 0 THEN
+        INSERT INTO User_Email (user_id, email)
+        VALUES (p_user_id, TRIM(p_email))
+        ON CONFLICT DO NOTHING;
+    END IF;
+
+    IF p_phone IS NOT NULL AND LENGTH(TRIM(p_phone)) > 0 THEN
+        INSERT INTO User_Phone (user_id, phone_number)
+        VALUES (p_user_id, TRIM(p_phone))
+        ON CONFLICT DO NOTHING;
+    END IF;
+END;
+$$;
+
+-- ===================== SIMPLE BUSINESS TRIGGERS =====================
+
+DROP TRIGGER IF EXISTS trg_product_requires_verified_seller ON Product;
+DROP FUNCTION IF EXISTS fn_product_requires_verified_seller();
+
+CREATE FUNCTION fn_product_requires_verified_seller()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM Sellers s
+        WHERE s.seller_id = NEW.seller_id
+          AND s.is_verified = TRUE
+    ) THEN
+        RAISE EXCEPTION 'Seller is not verified. Product listing is blocked.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_product_requires_verified_seller
+BEFORE INSERT OR UPDATE OF seller_id ON Product
+FOR EACH ROW
+EXECUTE FUNCTION fn_product_requires_verified_seller();
+
+DROP TRIGGER IF EXISTS trg_safe_delete_seller ON Sellers;
+DROP FUNCTION IF EXISTS fn_safe_delete_seller();
+
+CREATE FUNCTION fn_safe_delete_seller()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM Order_Item oi
+        JOIN Product_Variation pv ON pv.product_variation_id = oi.product_variation_id
+        JOIN Product p ON p.product_id = pv.product_id
+        WHERE p.seller_id = OLD.seller_id
+    ) THEN
+        RAISE EXCEPTION 'Cannot delete seller with order history. Keep seller for records.';
+    END IF;
+
+    DELETE FROM Contains
+    WHERE product_variation_id IN (
+        SELECT pv.product_variation_id
+        FROM Product_Variation pv
+        JOIN Product p ON p.product_id = pv.product_id
+        WHERE p.seller_id = OLD.seller_id
+    );
+
+    DELETE FROM Review_Product
+    WHERE product_id IN (
+        SELECT product_id
+        FROM Product
+        WHERE seller_id = OLD.seller_id
+    );
+
+    DELETE FROM Product_Variation
+    WHERE product_id IN (
+        SELECT product_id
+        FROM Product
+        WHERE seller_id = OLD.seller_id
+    );
+
+    DELETE FROM Product
+    WHERE seller_id = OLD.seller_id;
+
+    DELETE FROM Review_Seller
+    WHERE seller_id = OLD.seller_id;
+
+    DELETE FROM Seller_Address
+    WHERE seller_id = OLD.seller_id;
+
+    DELETE FROM Seller_Email
+    WHERE seller_id = OLD.seller_id;
+
+    DELETE FROM Seller_Phone
+    WHERE seller_id = OLD.seller_id;
+
+    RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER trg_safe_delete_seller
+BEFORE DELETE ON Sellers
+FOR EACH ROW
+EXECUTE FUNCTION fn_safe_delete_seller();

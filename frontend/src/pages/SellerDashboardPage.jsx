@@ -85,6 +85,7 @@ export default function SellerDashboardPage() {
   // Determine which seller to show
   const targetSellerId = sellerId || (isSellerUser ? user?.seller_id : null);
   const isOwnDashboard = isSellerUser && Number(targetSellerId) === Number(user?.seller_id);
+  const canManageProducts = isOwnDashboard && Boolean(seller?.is_verified);
 
   const buildCategoryAndBrandOptions = (allProducts) => {
     const categoryMap = new Map();
@@ -278,6 +279,11 @@ export default function SellerDashboardPage() {
       return;
     }
 
+    if (!seller?.is_verified) {
+      setActionError('Your seller account is not verified yet. Product listing is blocked.');
+      return;
+    }
+
     const normalizedCategoryName = toInitCap(productForm.category_name || productForm.category_input);
     const normalizedBrandName = toInitCap(productForm.brand_name || productForm.brand_input);
 
@@ -394,6 +400,11 @@ export default function SellerDashboardPage() {
 
     if (!isOwnDashboard) {
       setActionError('You can only delete products from your own dashboard.');
+      return;
+    }
+
+    if (!seller?.is_verified) {
+      setActionError('Your seller account is not verified yet. Product management is blocked.');
       return;
     }
 
@@ -666,7 +677,13 @@ export default function SellerDashboardPage() {
             </div>
           )}
 
-          {isOwnDashboard && (
+          {isOwnDashboard && !seller?.is_verified && (
+            <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+              Your seller account is pending verification. You cannot add, edit, or delete products until an admin verifies your account.
+            </div>
+          )}
+
+          {canManageProducts && (
             <div className="mb-6">
               <button
                 onClick={openCreateProductForm}
@@ -678,7 +695,7 @@ export default function SellerDashboardPage() {
             </div>
           )}
 
-          {isOwnDashboard && showProductForm && (
+          {canManageProducts && showProductForm && (
             <form onSubmit={handleProductSubmit} className="mb-6 space-y-4 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-gray-200">
@@ -890,7 +907,7 @@ export default function SellerDashboardPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-violet-400">৳{Number(p.price).toLocaleString('en-BD')}</span>
-                    {isOwnDashboard && (
+                    {canManageProducts && (
                       <div className="flex gap-1">
                         <button onClick={() => openEditProductForm(p)} className="p-1 text-gray-400 transition hover:text-blue-400">
                           <Edit className="w-4 h-4" />
@@ -1161,6 +1178,14 @@ export default function SellerDashboardPage() {
 
       {tab === 'info' && (
         <div className="space-y-4">
+          {/* Store Description */}
+          <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+            <h3 className="mb-3 text-sm font-semibold text-gray-300">Store Description</h3>
+            <p className="text-sm leading-relaxed text-gray-400">
+              {String(seller.store_description || '').trim() || 'No store description added yet.'}
+            </p>
+          </div>
+
           {/* Emails */}
           {Array.isArray(seller.emails) && seller.emails.length > 0 && (
             <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
