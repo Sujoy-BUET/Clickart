@@ -380,7 +380,7 @@ export default function CheckoutPage() {
         throw new Error(payRes?.message || 'Failed to complete payment.');
       }
 
-      // Keep order pending until all sellers confirm/reject.
+      // Keep order pending until admin verifies it.
       await getOrder(pendingPayment.order_id).catch(() => null);
 
       setPendingPayment(null);

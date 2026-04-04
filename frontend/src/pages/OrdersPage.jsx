@@ -120,7 +120,7 @@ export default function OrdersPage() {
                 <StatusBadge status={order.order_status || order.status} />
               </div>
 
-              {['CONFIRMED', 'SHIPPED', 'DELIVERED'].includes(String(order.order_status || '').toUpperCase()) && (
+              {['DELIVERED'].includes(String(order.order_status || '').toUpperCase()) && (
                 <div className="mb-4">
                   <button
                     onClick={() => handleMarkReceived(order.order_id)}

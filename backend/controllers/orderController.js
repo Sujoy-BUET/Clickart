@@ -1067,24 +1067,19 @@ export const updateOrderStatus = async (req, res) => {
   }
 };
 
-// Get orders where a seller has items and can confirm/reject
+// Get seller order history (read-only)
 export const getSellerOrders = async (req, res) => {
   const { sellerId } = req.params;
 
   try {
     await ensureOrderWorkflowSchema();
-    const sellerApprovalAvailable = await isSellerApprovalTableAvailable();
-    if (!sellerApprovalAvailable) {
-      return res.status(503).json({ success: false, message: "Seller approval workflow is not available. Please contact admin." });
-    }
-
-    const approvals = await sql`
+    const orders = await sql`
       SELECT
         o.order_id,
         o.user_id,
+        u.user_name,
         o.order_date,
         o.order_status,
-        osa.approval_status,
         COALESCE(SUM(oi.quantity), 0)::INT AS seller_units,
         COALESCE(SUM(oi.quantity * oi.unit_price), 0)::NUMERIC(12,2) AS seller_amount,
         COALESCE(
@@ -1102,18 +1097,17 @@ export const getSellerOrders = async (req, res) => {
           ) FILTER (WHERE oi.order_item_id IS NOT NULL),
           '[]'::json
         ) AS items
-      FROM Order_Seller_Approval osa
-      JOIN Orders o ON o.order_id = osa.order_id
-      LEFT JOIN Order_Item oi ON oi.order_id = o.order_id
-      LEFT JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
-      LEFT JOIN Product p ON pv.product_id = p.product_id
-      WHERE osa.seller_id = ${sellerId}
-        AND (p.seller_id = ${sellerId} OR p.seller_id IS NULL)
-      GROUP BY o.order_id, o.user_id, o.order_date, o.order_status, osa.approval_status
+      FROM Orders o
+      LEFT JOIN Users u ON u.user_id = o.user_id
+      JOIN Order_Item oi ON oi.order_id = o.order_id
+      JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+      JOIN Product p ON pv.product_id = p.product_id
+      WHERE p.seller_id = ${sellerId}
+      GROUP BY o.order_id, o.user_id, u.user_name, o.order_date, o.order_status
       ORDER BY o.order_date DESC, o.order_id DESC
     `;
 
-    return res.status(200).json({ success: true, data: approvals });
+    return res.status(200).json({ success: true, data: orders });
   } catch (error) {
     console.error("Error in getSellerOrders:", error);
     return res.status(500).json({ success: false, message: "Internal Server Error" });
@@ -1202,8 +1196,8 @@ export const markOrderReceived = async (req, res) => {
       return res.status(400).json({ success: false, message: "Rejected/cancelled order cannot be marked as received" });
     }
 
-    if (!['CONFIRMED', 'SHIPPED', 'DELIVERED', 'SUCCESSFUL'].includes(order.order_status)) {
-      return res.status(400).json({ success: false, message: "Order can be marked received only after seller confirmation" });
+    if (!['DELIVERED', 'SUCCESSFUL'].includes(order.order_status)) {
+      return res.status(400).json({ success: false, message: "Order can be marked received only after delivery" });
     }
 
     const updated = await sql`

@@ -858,7 +858,7 @@ export const getSellerSalesSummary = async (req, res) => {
             0
           )::INT AS eligible_quantity
         FROM Orders o
-        JOIN Coupon cp ON cp.coupon_id = o.coupon_id
+        JOIN Coupon cp ON cp.coupon_id = o.coupon_id AND cp.seller_id = ${id}
         JOIN seller_items si ON si.order_id = o.order_id
         LEFT JOIN Coupon_Product cpp ON cpp.coupon_id = cp.coupon_id AND cpp.product_id = si.product_id
         GROUP BY o.order_id
@@ -967,7 +967,7 @@ export const getSellerSalesSummary = async (req, res) => {
       JOIN Orders o ON oi.order_id = o.order_id
       LEFT JOIN order_totals ot ON ot.order_id = o.order_id
       LEFT JOIN coupon_eligible ce ON ce.order_id = o.order_id
-      LEFT JOIN Coupon cp ON o.coupon_id = cp.coupon_id
+      LEFT JOIN Coupon cp ON o.coupon_id = cp.coupon_id AND cp.seller_id = ${id}
       WHERE p.seller_id = ${id}
         AND o.order_status IN ('DELIVERED', 'SUCCESSFUL')
       ORDER BY o.order_date DESC, oi.order_item_id DESC

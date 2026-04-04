@@ -126,7 +126,6 @@ export const updateOrderStatus = (id, body, token) => request(`/orders/${id}/sta
   body: JSON.stringify(body),
   headers: token ? { Authorization: `Bearer ${token}` } : {},
 });
-export const sellerRespondToOrder = (id, body) => request(`/orders/${id}/seller-response`, { method: 'PUT', body: JSON.stringify(body) });
 export const markOrderReceived = (id, body) => request(`/orders/${id}/received`, { method: 'PUT', body: JSON.stringify(body) });
 export const deleteOrder     = (id)   => request(`/orders/${id}`, { method: 'DELETE' });
 

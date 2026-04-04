@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { createProduct, createSellerCoupon, createSellerReview, deleteProduct, deleteSellerCoupon, getProduct, getSeller, getSellerCoupons, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
+import { createProduct, createSellerCoupon, createSellerReview, deleteProduct, deleteSellerCoupon, getProduct, getSeller, getSellerCoupons, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -54,7 +54,6 @@ export default function SellerDashboardPage() {
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [orderActionLoading, setOrderActionLoading] = useState(false);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewForm, setReviewForm] = useState({
     rating: '5',
@@ -384,35 +383,6 @@ export default function SellerDashboardPage() {
       setActionError(err?.message || 'Failed to save product.');
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleSellerOrderResponse = async (orderId, approvalStatus) => {
-    if (!isOwnDashboard) {
-      setActionError('You can only act on orders from your own dashboard.');
-      return;
-    }
-
-    setActionError('');
-    setActionSuccess('');
-    setOrderActionLoading(true);
-    try {
-      const response = await sellerRespondToOrder(orderId, {
-        seller_id: Number(targetSellerId),
-        approval_status: approvalStatus,
-      });
-
-      if (!response?.success) {
-        setActionError(response?.message || 'Failed to update seller order response.');
-        return;
-      }
-
-      setActionSuccess(`Order #${orderId} ${approvalStatus === 'CONFIRMED' ? 'confirmed' : 'rejected'} successfully.`);
-      await refreshSellerOrders();
-    } catch (err) {
-      setActionError(err?.message || 'Failed to update seller order response.');
-    } finally {
-      setOrderActionLoading(false);
     }
   };
 
@@ -776,6 +746,51 @@ export default function SellerDashboardPage() {
   const filteredMonthlyRows = selectedMonthKey === 'all'
     ? monthlyRows
     : monthlyRows.filter((row) => `${row.year}-${String(row.month).padStart(2, '0')}` === selectedMonthKey);
+
+  const groupedSalesOrders = useMemo(() => {
+    const rows = Array.isArray(salesSummary?.sales_history) ? salesSummary.sales_history : [];
+    const grouped = new Map();
+
+    for (const row of rows) {
+      const orderId = Number(row?.order_id);
+      if (!Number.isFinite(orderId)) continue;
+
+      if (!grouped.has(orderId)) {
+        grouped.set(orderId, {
+          order_id: orderId,
+          order_date: row.order_date,
+          coupon_code: row.coupon_code,
+          coupon_name: row.coupon_name,
+          discount_type: row.discount_type,
+          discount_value: row.discount_value,
+          max_discount_amount: row.max_discount_amount,
+          min_order_amount: row.min_order_amount,
+          applies_all_products: row.applies_all_products,
+          coupon_products: row.coupon_products,
+          display_discount_amount: row.display_discount_amount,
+          order_discount_amount: row.order_discount_amount,
+          display_final_amount: row.display_final_amount,
+          order_total_amount: row.order_total_amount,
+          order_status: row.order_status,
+          total_quantity: 0,
+          gross_amount: 0,
+          products: [],
+        });
+      }
+
+      const current = grouped.get(orderId);
+      current.total_quantity += Number(row.quantity || 0);
+      current.gross_amount += Number(row.line_total || 0);
+      current.products.push({
+        product_name: row.product_name,
+        quantity: Number(row.quantity || 0),
+        variation_type: row.variation_type,
+        variation_value: row.variation_value,
+      });
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => new Date(b.order_date || 0).getTime() - new Date(a.order_date || 0).getTime());
+  }, [salesSummary]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -1332,20 +1347,18 @@ export default function SellerDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {salesSummary.sales_history.map((row, index) => {
+                    {groupedSalesOrders.map((row) => {
                       const hasCoupon = Boolean(row.coupon_code);
                       const isExpanded = expandedCouponOrderId === row.order_id;
-                      const isFirstRowForOrder = index === 0 || salesSummary.sales_history[index - 1]?.order_id !== row.order_id;
+                      const productSummary = row.products.map((item) => `${item.product_name} x ${item.quantity}`).join(', ');
 
                       return (
-                        <>
-                          <tr key={row.order_item_id} className="border-b border-gray-800/70 text-gray-300">
+                        <Fragment key={`order-sales-${row.order_id}`}>
+                          <tr className="border-b border-gray-800/70 text-gray-300">
                             <td className="px-2 py-2 whitespace-nowrap">{row.order_date ? new Date(row.order_date).toLocaleString() : '-'}</td>
                             <td className="px-2 py-2">
-                              <div>{row.product_name}</div>
-                              {(row.variation_type || row.variation_value) && (
-                                <div className="text-xs text-gray-500">{row.variation_type}: {row.variation_value}</div>
-                              )}
+                              <div>{productSummary || '-'}</div>
+                              <div className="text-xs text-gray-500">{row.products.length} product row(s)</div>
                             </td>
                             <td className="px-2 py-2 text-xs text-emerald-300">
                               {hasCoupon ? (
@@ -1358,16 +1371,16 @@ export default function SellerDashboardPage() {
                                 </button>
                               ) : '-'}
                             </td>
-                            <td className="px-2 py-2">{row.quantity}</td>
-                            <td className="px-2 py-2">৳{Number(row.unit_price || 0).toLocaleString('en-BD')}</td>
-                            <td className="px-2 py-2">৳{Number(row.line_total || 0).toLocaleString('en-BD')}</td>
+                            <td className="px-2 py-2">{row.total_quantity}</td>
+                            <td className="px-2 py-2">-</td>
+                            <td className="px-2 py-2">৳{Number(row.gross_amount || 0).toLocaleString('en-BD')}</td>
                             <td className="px-2 py-2 text-red-300">-৳{Number(row.display_discount_amount ?? row.order_discount_amount ?? 0).toLocaleString('en-BD')}</td>
                             <td className="px-2 py-2 text-emerald-300">৳{Number(row.display_final_amount ?? row.order_total_amount ?? 0).toLocaleString('en-BD')}</td>
                             <td className="px-2 py-2">#{row.order_id}</td>
                           </tr>
 
-                          {hasCoupon && isExpanded && isFirstRowForOrder && (
-                            <tr key={`coupon-details-${row.order_id}`} className="border-b border-gray-800/70 bg-gray-800/40 text-gray-300">
+                          {hasCoupon && isExpanded && (
+                            <tr className="border-b border-gray-800/70 bg-gray-800/40 text-gray-300">
                               <td colSpan={9} className="px-3 py-3 text-xs">
                                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                   <p>
@@ -1395,10 +1408,21 @@ export default function SellerDashboardPage() {
                                     Final Price (Order): <span className="text-emerald-300">৳{Number(row.display_final_amount ?? row.order_total_amount ?? 0).toLocaleString('en-BD')}</span>
                                   </p>
                                 </div>
+                                <div className="mt-2">
+                                  <p className="text-gray-400">Products in this order:</p>
+                                  <div className="space-y-1">
+                                    {row.products.map((item, idx) => (
+                                      <p key={`order-${row.order_id}-product-${idx}`} className="text-gray-300">
+                                        {item.product_name} x {item.quantity}
+                                        {(item.variation_type || item.variation_value) ? ` (${item.variation_type || 'Variation'}: ${item.variation_value || '-'})` : ''}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
                               </td>
                             </tr>
                           )}
-                        </>
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -1476,20 +1500,17 @@ export default function SellerDashboardPage() {
           ) : (
             <div className="space-y-4">
               {sellerOrders.map((order) => {
-                const sellerApproval = String(order.approval_status || 'PENDING').toUpperCase();
-                const canTakeAction = isOwnDashboard && sellerApproval === 'PENDING' && !['REJECTED', 'SUCCESSFUL', 'CANCELLED'].includes(String(order.order_status || '').toUpperCase());
+                const buyerLabel = String(order.user_name || '').trim() || `User #${order.user_id}`;
                 return (
                   <div key={order.order_id} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-gray-200">Order #{order.order_id}</p>
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-violet-300">Order: {order.order_status}</span>
-                        <span className={`rounded-full px-2.5 py-1 ${sellerApproval === 'CONFIRMED' ? 'bg-emerald-500/10 text-emerald-300' : sellerApproval === 'REJECTED' ? 'bg-red-500/10 text-red-300' : 'bg-amber-500/10 text-amber-300'}`}>
-                          Seller: {sellerApproval}
-                        </span>
                       </div>
                     </div>
 
+                    <p className="mt-2 text-xs text-gray-400">Buyer: {buyerLabel}</p>
                     <p className="mt-2 text-xs text-gray-500">{order.order_date ? new Date(order.order_date).toLocaleString() : ''}</p>
                     <p className="mt-2 text-sm text-gray-400">Your units: {Number(order.seller_units || 0)} | Amount: ৳{Number(order.seller_amount || 0).toLocaleString('en-BD')}</p>
 
@@ -1501,25 +1522,6 @@ export default function SellerDashboardPage() {
                             <p className="text-xs text-gray-400">Qty: {item.quantity} | Unit: ৳{Number(item.unit_price || 0).toLocaleString('en-BD')}</p>
                           </div>
                         ))}
-                      </div>
-                    )}
-
-                    {canTakeAction && (
-                      <div className="mt-4 flex items-center gap-2">
-                        <button
-                          onClick={() => handleSellerOrderResponse(order.order_id, 'CONFIRMED')}
-                          disabled={orderActionLoading}
-                          className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          onClick={() => handleSellerOrderResponse(order.order_id, 'REJECTED')}
-                          disabled={orderActionLoading}
-                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
-                        >
-                          Reject
-                        </button>
                       </div>
                     )}
                   </div>
