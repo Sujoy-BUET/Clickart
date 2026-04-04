@@ -7,6 +7,248 @@ const normalizeSellerName = (value) => String(value || "").trim();
 const normalizeEmail = (value) => String(value || "").trim();
 const normalizePhone = (value) => String(value || "").trim();
 
+const ensureSellerCouponSchema = async () => {
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS seller_id INT
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS coupon_name VARCHAR(120)
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS applies_all_products BOOLEAN DEFAULT TRUE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS Coupon_Product (
+      coupon_id INT NOT NULL,
+      product_id INT NOT NULL,
+      PRIMARY KEY (coupon_id, product_id),
+      FOREIGN KEY (coupon_id) REFERENCES Coupon(coupon_id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES Product(product_id) ON DELETE CASCADE
+    )
+  `;
+};
+
+const toBoolean = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (value === undefined || value === null) return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+};
+
+const toNumericArray = (value) => {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0))];
+};
+
+export const getSellerCoupons = async (req, res) => {
+  const { id } = req.params;
+  const activeOnly = toBoolean(req.query.active, false);
+
+  try {
+    await ensureSellerCouponSchema();
+
+    const sellerRows = await sql`
+      SELECT seller_id
+      FROM Sellers
+      WHERE seller_id = ${id}
+      LIMIT 1
+    `;
+
+    if (sellerRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    const coupons = activeOnly
+      ? await sql`
+          SELECT c.coupon_id, c.seller_id, c.coupon_name, c.code, c.description,
+                 c.discount_type, c.discount_value, c.max_discount_amount, c.min_order_amount,
+                 c.applies_all_products, c.start_date, c.end_date, c.is_active,
+                 COALESCE(
+                   json_agg(
+                     json_build_object('product_id', p.product_id, 'product_name', p.product_name)
+                     ORDER BY p.product_name
+                   ) FILTER (WHERE p.product_id IS NOT NULL),
+                   '[]'::json
+                 ) AS products
+          FROM Coupon c
+          LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
+          LEFT JOIN Product p ON p.product_id = cp.product_id
+          WHERE c.seller_id = ${id}
+            AND c.is_active = TRUE
+            AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
+          GROUP BY c.coupon_id
+          ORDER BY c.coupon_id DESC
+        `
+      : await sql`
+          SELECT c.coupon_id, c.seller_id, c.coupon_name, c.code, c.description,
+                 c.discount_type, c.discount_value, c.max_discount_amount, c.min_order_amount,
+                 c.applies_all_products, c.start_date, c.end_date, c.is_active,
+                 COALESCE(
+                   json_agg(
+                     json_build_object('product_id', p.product_id, 'product_name', p.product_name)
+                     ORDER BY p.product_name
+                   ) FILTER (WHERE p.product_id IS NOT NULL),
+                   '[]'::json
+                 ) AS products
+          FROM Coupon c
+          LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
+          LEFT JOIN Product p ON p.product_id = cp.product_id
+          WHERE c.seller_id = ${id}
+          GROUP BY c.coupon_id
+          ORDER BY c.coupon_id DESC
+        `;
+
+    return res.status(200).json({ success: true, data: coupons });
+  } catch (error) {
+    console.error("Error in getSellerCoupons:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+export const createSellerCoupon = async (req, res) => {
+  const { id } = req.params;
+  const {
+    coupon_name,
+    code,
+    description,
+    discount_type,
+    discount_value,
+    max_discount_amount,
+    min_order_amount,
+    start_date,
+    end_date,
+    is_active,
+    applies_all_products,
+    product_ids,
+  } = req.body;
+
+  const normalizedName = String(coupon_name || "").trim();
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  const normalizedType = String(discount_type || "").trim().toUpperCase();
+  const normalizedProductIds = toNumericArray(product_ids);
+  const appliesAllProducts = toBoolean(applies_all_products, true);
+
+  if (!normalizedName || !normalizedCode || !normalizedType || discount_value === undefined || !start_date || !end_date) {
+    return res.status(400).json({
+      success: false,
+      message: "coupon_name, code, discount_type, discount_value, start_date and end_date are required",
+    });
+  }
+
+  if (!["PERCENT", "FIXED"].includes(normalizedType)) {
+    return res.status(400).json({ success: false, message: "discount_type must be PERCENT or FIXED" });
+  }
+
+  if (new Date(start_date).getTime() > new Date(end_date).getTime()) {
+    return res.status(400).json({ success: false, message: "start_date must be before end_date" });
+  }
+
+  const discountNumber = Number(discount_value);
+  if (!Number.isFinite(discountNumber) || discountNumber <= 0) {
+    return res.status(400).json({ success: false, message: "discount_value must be a positive number" });
+  }
+
+  if (!appliesAllProducts && normalizedProductIds.length === 0) {
+    return res.status(400).json({ success: false, message: "Select at least one product or enable apply to all products" });
+  }
+
+  try {
+    await ensureSellerCouponSchema();
+
+    const sellerRows = await sql`
+      SELECT seller_id
+      FROM Sellers
+      WHERE seller_id = ${id}
+      LIMIT 1
+    `;
+
+    if (sellerRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    if (normalizedProductIds.length > 0) {
+      const ownedProducts = await sql`
+        SELECT product_id
+        FROM Product
+        WHERE seller_id = ${id}
+          AND product_id = ANY(${normalizedProductIds})
+      `;
+
+      if (ownedProducts.length !== normalizedProductIds.length) {
+        return res.status(400).json({ success: false, message: "Some selected products do not belong to this seller" });
+      }
+    }
+
+    const created = await sql`
+      INSERT INTO Coupon (
+        seller_id,
+        coupon_name,
+        code,
+        description,
+        discount_type,
+        discount_value,
+        max_discount_amount,
+        min_order_amount,
+        applies_all_products,
+        start_date,
+        end_date,
+        is_active
+      )
+      VALUES (
+        ${id},
+        ${normalizedName},
+        ${normalizedCode},
+        ${description ?? null},
+        ${normalizedType},
+        ${discountNumber},
+        ${max_discount_amount ?? null},
+        ${min_order_amount ?? null},
+        ${appliesAllProducts},
+        ${start_date},
+        ${end_date},
+        ${is_active ?? true}
+      )
+      RETURNING *
+    `;
+
+    const newCoupon = created[0];
+
+    if (!appliesAllProducts && normalizedProductIds.length > 0) {
+      for (const productId of normalizedProductIds) {
+        await sql`
+          INSERT INTO Coupon_Product (coupon_id, product_id)
+          VALUES (${newCoupon.coupon_id}, ${productId})
+          ON CONFLICT DO NOTHING
+        `;
+      }
+    }
+
+    const selectedProducts = !appliesAllProducts && normalizedProductIds.length > 0
+      ? await sql`
+          SELECT product_id, product_name
+          FROM Product
+          WHERE product_id = ANY(${normalizedProductIds})
+          ORDER BY product_name
+        `
+      : [];
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        ...newCoupon,
+        products: selectedProducts,
+      },
+    });
+  } catch (error) {
+    if (String(error?.code || "") === "23505") {
+      return res.status(409).json({ success: false, message: "Coupon code already exists" });
+    }
+
+    console.error("Error in createSellerCoupon:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 // Seller Authentication  
 export const authenticateSeller = async (req, res) => {
   const { seller_name, seller_password } = req.body;

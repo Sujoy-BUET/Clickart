@@ -8,6 +8,7 @@ import {
   getOrder,
   createOrder,
   createPayment,
+  getAvailableCouponsForCheckout,
   updatePaymentStatus,
   setCartItemQuantity,
 } from '../api';
@@ -51,6 +52,7 @@ export default function CheckoutPage() {
   });
 
   const [couponCode, setCouponCode] = useState('');
+  const [availableCoupons, setAvailableCoupons] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('COD');
   const [pendingPayment, setPendingPayment] = useState(null);
   const [finalizingPayment, setFinalizingPayment] = useState(false);
@@ -59,6 +61,24 @@ export default function CheckoutPage() {
     account_number: '',
     transaction_id: '',
   });
+
+  const loadAvailableCoupons = async () => {
+    if (!userId) {
+      setAvailableCoupons([]);
+      return;
+    }
+
+    const rows = await getAvailableCouponsForCheckout(userId).catch(() => []);
+    const coupons = Array.isArray(rows) ? rows : [];
+    setAvailableCoupons(coupons);
+
+    if (couponCode) {
+      const stillAvailable = coupons.some((coupon) => String(coupon.code || '').toUpperCase() === String(couponCode).trim().toUpperCase());
+      if (!stillAvailable) {
+        setCouponCode('');
+      }
+    }
+  };
 
   const handleRefreshCart = async () => {
     setError('');
@@ -95,6 +115,7 @@ export default function CheckoutPage() {
         ? refreshedRows.filter((row) => row.product_variation_id)
         : [];
       setItems(refreshedItems);
+      await loadAvailableCoupons();
 
       if (refreshedItems.length === 0) {
         setError('Your cart is empty. Please add products before checkout.');
@@ -140,6 +161,7 @@ export default function CheckoutPage() {
         const cartRows = await getCart(cart.cart_id);
         const cartItems = Array.isArray(cartRows) ? cartRows.filter((row) => row.product_variation_id) : [];
         setItems(cartItems);
+        await loadAvailableCoupons();
       })
       .catch(() => {
         setItems([]);
@@ -152,6 +174,15 @@ export default function CheckoutPage() {
     () => items.reduce((s, i) => s + Number(i.price || 0) * Number(i.quantity || 1), 0),
     [items]
   );
+
+  const selectedCoupon = useMemo(() => {
+    const normalizedCode = String(couponCode || '').trim().toUpperCase();
+    if (!normalizedCode) return null;
+    return availableCoupons.find((coupon) => String(coupon.code || '').toUpperCase() === normalizedCode) || null;
+  }, [availableCoupons, couponCode]);
+
+  const discountAmount = Number(selectedCoupon?.estimated_discount || 0);
+  const payableTotal = Math.max(0, total - discountAmount);
 
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
@@ -480,12 +511,30 @@ export default function CheckoutPage() {
           <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-300 uppercase tracking-wider">
             <Tag className="h-4 w-4 text-violet-400" /> Coupon Code
           </h2>
-          <input
-            value={couponCode}
-            onChange={(e) => setCouponCode(e.target.value)}
-            placeholder="Enter coupon code (optional)"
-            className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-violet-500"
-          />
+          {availableCoupons.length === 0 ? (
+            <p className="text-sm text-gray-500">No eligible coupon available for this cart.</p>
+          ) : (
+            <>
+              <select
+                value={couponCode}
+                onChange={(e) => setCouponCode(e.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 outline-none focus:border-violet-500"
+              >
+                <option value="">Select a coupon (optional)</option>
+                {availableCoupons.map((coupon) => (
+                  <option key={coupon.coupon_id} value={coupon.code}>
+                    {coupon.code} - {coupon.coupon_name || 'Coupon'} ({coupon.discount_type === 'PERCENT' ? `${Number(coupon.discount_value || 0)}%` : `৳${Number(coupon.discount_value || 0)}`} from {coupon.store_name})
+                  </option>
+                ))}
+              </select>
+
+              {selectedCoupon && (
+                <p className="text-xs text-emerald-300">
+                  Estimated discount: ৳{discountAmount.toLocaleString('en-BD')} on eligible subtotal ৳{Number(selectedCoupon.eligible_subtotal || 0).toLocaleString('en-BD')}
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-3">
@@ -525,8 +574,16 @@ export default function CheckoutPage() {
             ))}
           </div>
           <div className="mt-4 pt-4 border-t border-gray-800 flex justify-between">
-            <span className="font-semibold text-gray-200">Total</span>
-            <span className="text-xl font-bold text-violet-400">৳{total.toLocaleString('en-BD')}</span>
+            <span className="font-semibold text-gray-200">Subtotal</span>
+            <span className="text-xl font-bold text-gray-200">৳{total.toLocaleString('en-BD')}</span>
+          </div>
+          <div className="mt-2 flex justify-between text-sm">
+            <span className="text-gray-400">Discount</span>
+            <span className="font-semibold text-emerald-300">-৳{discountAmount.toLocaleString('en-BD')}</span>
+          </div>
+          <div className="mt-2 pt-2 border-t border-gray-800 flex justify-between">
+            <span className="font-semibold text-gray-200">Payable Total</span>
+            <span className="text-xl font-bold text-violet-400">৳{payableTotal.toLocaleString('en-BD')}</span>
           </div>
         </div>
 
@@ -546,7 +603,7 @@ export default function CheckoutPage() {
             <p className="mt-1 text-sm text-gray-400">
               Method: {pendingPayment.payment_method === 'COD' ? 'Cash on Delivery' : 'Mobile Banking'}
             </p>
-            <p className="mt-1 text-sm text-gray-400">Total: ৳{total.toLocaleString('en-BD')}</p>
+            <p className="mt-1 text-sm text-gray-400">Total: ৳{payableTotal.toLocaleString('en-BD')}</p>
 
             {pendingPayment.payment_method === 'COD' ? (
               <div className="mt-4 rounded-lg border border-emerald-600/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { createProduct, createSellerReview, deleteProduct, getProduct, getSeller, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
+import { createProduct, createSellerCoupon, createSellerReview, deleteProduct, getProduct, getSeller, getSellerCoupons, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -64,6 +64,8 @@ export default function SellerDashboardPage() {
   const [showProductForm, setShowProductForm] = useState(false);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [brandOptions, setBrandOptions] = useState([]);
+  const [coupons, setCoupons] = useState([]);
+  const [couponSubmitting, setCouponSubmitting] = useState(false);
   const [productForm, setProductForm] = useState({
     product_name: '',
     description: '',
@@ -77,6 +79,19 @@ export default function SellerDashboardPage() {
     brand_name: '',
     brand_input: '',
     variations: [],
+  });
+  const [couponForm, setCouponForm] = useState({
+    coupon_name: '',
+    code: '',
+    description: '',
+    discount_type: 'PERCENT',
+    discount_value: '',
+    max_discount_amount: '',
+    min_order_amount: '',
+    start_date: '',
+    end_date: '',
+    applies_all_products: true,
+    product_ids: [],
   });
 
   const isAuthenticatedUser = Boolean(user);
@@ -121,6 +136,11 @@ export default function SellerDashboardPage() {
   const refreshSellerOrders = useCallback(async () => {
     const orders = await getSellerOrders(targetSellerId).catch(() => []);
     setSellerOrders(toObjectArray(orders));
+  }, [targetSellerId]);
+
+  const refreshSellerCoupons = useCallback(async (activeOnly = false) => {
+    const rows = await getSellerCoupons(targetSellerId, activeOnly).catch(() => []);
+    setCoupons(Array.isArray(rows) ? rows : []);
   }, [targetSellerId]);
 
   const loadSellerReviews = useCallback(async () => {
@@ -428,6 +448,89 @@ export default function SellerDashboardPage() {
     }
   };
 
+  const handleCouponFormChange = (field, value) => {
+    setCouponForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const toggleCouponProduct = (productId) => {
+    const numericProductId = Number(productId);
+    if (!numericProductId) return;
+
+    setCouponForm((prev) => {
+      const selected = new Set(prev.product_ids || []);
+      if (selected.has(numericProductId)) {
+        selected.delete(numericProductId);
+      } else {
+        selected.add(numericProductId);
+      }
+      return { ...prev, product_ids: Array.from(selected) };
+    });
+  };
+
+  const handleCouponSubmit = async (e) => {
+    e.preventDefault();
+    setActionError('');
+    setActionSuccess('');
+
+    if (!isOwnDashboard || !targetSellerId) {
+      setActionError('You can only manage coupons from your own dashboard.');
+      return;
+    }
+
+    if (!couponForm.applies_all_products && (!Array.isArray(couponForm.product_ids) || couponForm.product_ids.length === 0)) {
+      setActionError('Select at least one product or enable apply to all products.');
+      return;
+    }
+
+    setCouponSubmitting(true);
+    try {
+      const payload = {
+        coupon_name: String(couponForm.coupon_name || '').trim(),
+        code: String(couponForm.code || '').trim().toUpperCase(),
+        description: String(couponForm.description || '').trim() || null,
+        discount_type: couponForm.discount_type,
+        discount_value: Number(couponForm.discount_value),
+        max_discount_amount: couponForm.max_discount_amount === '' ? null : Number(couponForm.max_discount_amount),
+        min_order_amount: couponForm.min_order_amount === '' ? null : Number(couponForm.min_order_amount),
+        start_date: couponForm.start_date,
+        end_date: couponForm.end_date,
+        applies_all_products: Boolean(couponForm.applies_all_products),
+        product_ids: couponForm.applies_all_products ? [] : couponForm.product_ids,
+      };
+
+      if (!payload.coupon_name || !payload.code || Number.isNaN(payload.discount_value) || !payload.start_date || !payload.end_date) {
+        setActionError('Please fill coupon name, code, discount value, start date, and end date.');
+        return;
+      }
+
+      const response = await createSellerCoupon(targetSellerId, payload);
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to create coupon.');
+        return;
+      }
+
+      setCouponForm({
+        coupon_name: '',
+        code: '',
+        description: '',
+        discount_type: 'PERCENT',
+        discount_value: '',
+        max_discount_amount: '',
+        min_order_amount: '',
+        start_date: '',
+        end_date: '',
+        applies_all_products: true,
+        product_ids: [],
+      });
+      setActionSuccess('Coupon created successfully.');
+      await refreshSellerCoupons();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to create coupon.');
+    } finally {
+      setCouponSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     setError('');
 
@@ -479,12 +582,14 @@ export default function SellerDashboardPage() {
         const sellerOrdersPromise = isOwnDashboard
           ? getSellerOrders(targetSellerId).catch(() => [])
           : Promise.resolve([]);
+        const couponsPromise = getSellerCoupons(targetSellerId, !isOwnDashboard).catch(() => []);
 
-        const [r, p, sales, sellerOrderRows] = await Promise.all([
+        const [r, p, sales, sellerOrderRows, couponsRows] = await Promise.all([
           reviewsPromise,
           productsPromise,
           salesPromise,
           sellerOrdersPromise,
+          couponsPromise,
         ]);
 
         if (!active) return;
@@ -498,6 +603,7 @@ export default function SellerDashboardPage() {
         buildCategoryAndBrandOptions(all);
 
         setSellerOrders(toObjectArray(sellerOrderRows));
+        setCoupons(Array.isArray(couponsRows) ? couponsRows : []);
 
         if (sales) {
           setSalesSummary({
@@ -572,6 +678,7 @@ export default function SellerDashboardPage() {
   const tabs = isOwnDashboard
     ? [
       { key: 'products', label: 'Products', count: products.length },
+      { key: 'coupons', label: 'Coupons', count: coupons.length },
       { key: 'orders', label: 'Orders', count: sellerOrders.length },
       { key: 'sales', label: 'Sales', count: salesSummary.sales_history.length },
       { key: 'reviews', label: 'Reviews', count: reviewFeed.length },
@@ -579,6 +686,7 @@ export default function SellerDashboardPage() {
     ]
     : [
       { key: 'products', label: 'Products', count: products.length },
+      { key: 'coupons', label: 'Coupons', count: coupons.length },
       { key: 'reviews', label: 'Reviews', count: reviewFeed.length },
       { key: 'info', label: 'Info' },
     ];
@@ -918,6 +1026,184 @@ export default function SellerDashboardPage() {
                       </div>
                     )}
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'coupons' && (
+        <div className="space-y-5">
+          {actionSuccess && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+              {actionSuccess}
+            </div>
+          )}
+
+          {actionError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {actionError}
+            </div>
+          )}
+
+          {isOwnDashboard && (
+            <form onSubmit={handleCouponSubmit} className="rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-gray-200">Create Coupon</h3>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <input
+                  required
+                  value={couponForm.coupon_name}
+                  onChange={(e) => handleCouponFormChange('coupon_name', e.target.value)}
+                  placeholder="Coupon name"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <input
+                  required
+                  value={couponForm.code}
+                  onChange={(e) => handleCouponFormChange('code', e.target.value.toUpperCase())}
+                  placeholder="Coupon code"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <select
+                  value={couponForm.discount_type}
+                  onChange={(e) => handleCouponFormChange('discount_type', e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                >
+                  <option value="PERCENT">Percent</option>
+                  <option value="FIXED">Fixed</option>
+                </select>
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={couponForm.discount_value}
+                  onChange={(e) => handleCouponFormChange('discount_value', e.target.value)}
+                  placeholder="Discount value"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={couponForm.min_order_amount}
+                  onChange={(e) => handleCouponFormChange('min_order_amount', e.target.value)}
+                  placeholder="Min order amount"
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                />
+                {couponForm.discount_type === 'PERCENT' && (
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={couponForm.max_discount_amount}
+                    onChange={(e) => handleCouponFormChange('max_discount_amount', e.target.value)}
+                    placeholder="Max discount amount"
+                    className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+                  />
+                )}
+                <input
+                  required
+                  type="date"
+                  value={couponForm.start_date}
+                  onChange={(e) => handleCouponFormChange('start_date', e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                />
+                <input
+                  required
+                  type="date"
+                  value={couponForm.end_date}
+                  onChange={(e) => handleCouponFormChange('end_date', e.target.value)}
+                  className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <textarea
+                value={couponForm.description}
+                onChange={(e) => handleCouponFormChange('description', e.target.value)}
+                placeholder="Description (optional)"
+                rows={2}
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+              />
+
+              <div className="space-y-2">
+                <label className="inline-flex items-center gap-2 text-sm text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={couponForm.applies_all_products}
+                    onChange={(e) => handleCouponFormChange('applies_all_products', e.target.checked)}
+                    className="rounded border-gray-600 bg-gray-800"
+                  />
+                  Apply coupon to all products
+                </label>
+
+                {!couponForm.applies_all_products && (
+                  <div className="rounded-lg border border-gray-700 bg-gray-800 p-3">
+                    <p className="mb-2 text-xs text-gray-400">Select products for this coupon</p>
+                    <div className="max-h-44 space-y-1 overflow-auto pr-1">
+                      {products.map((product) => (
+                        <label key={product.product_id} className="flex items-center gap-2 text-sm text-gray-300">
+                          <input
+                            type="checkbox"
+                            checked={couponForm.product_ids.includes(Number(product.product_id))}
+                            onChange={() => toggleCouponProduct(product.product_id)}
+                            className="rounded border-gray-600 bg-gray-900"
+                          />
+                          <span>{product.product_name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={couponSubmitting}
+                className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {couponSubmitting ? 'Creating...' : 'Create Coupon'}
+              </button>
+            </form>
+          )}
+
+          {coupons.length === 0 ? (
+            <p className="text-sm text-gray-500">No coupons available for this seller yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {coupons.map((coupon) => (
+                <div key={coupon.coupon_id} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-100">{coupon.coupon_name || coupon.code}</p>
+                      <p className="text-xs text-violet-300">Code: {coupon.code}</p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs ${coupon.is_active ? 'bg-emerald-500/10 text-emerald-300' : 'bg-gray-700 text-gray-300'}`}>
+                      {coupon.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  <p className="mt-2 text-xs text-gray-400">{coupon.description || 'No description'}</p>
+                  <p className="mt-2 text-xs text-gray-400">
+                    {coupon.discount_type === 'PERCENT' ? `${Number(coupon.discount_value || 0)}% off` : `৳${Number(coupon.discount_value || 0)} off`}
+                    {coupon.min_order_amount ? ` | Min order ৳${Number(coupon.min_order_amount).toLocaleString('en-BD')}` : ''}
+                    {coupon.discount_type === 'PERCENT' && coupon.max_discount_amount ? ` | Max ৳${Number(coupon.max_discount_amount).toLocaleString('en-BD')}` : ''}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Valid: {coupon.start_date ? new Date(coupon.start_date).toLocaleDateString() : '-'} to {coupon.end_date ? new Date(coupon.end_date).toLocaleDateString() : '-'}
+                  </p>
+
+                  {!coupon.applies_all_products && Array.isArray(coupon.products) && coupon.products.length > 0 && (
+                    <p className="mt-2 text-xs text-gray-400">
+                      Products: {coupon.products.map((p) => p.product_name).join(', ')}
+                    </p>
+                  )}
+
+                  {coupon.applies_all_products && (
+                    <p className="mt-2 text-xs text-gray-400">Applies to all seller products</p>
+                  )}
                 </div>
               ))}
             </div>

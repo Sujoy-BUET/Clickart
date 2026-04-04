@@ -67,8 +67,55 @@ const ensureOrderStatusConstraint = async () => {
   `;
 };
 
+const ensureCouponSchema = async () => {
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS seller_id INT
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS coupon_name VARCHAR(120)
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS applies_all_products BOOLEAN DEFAULT TRUE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS Coupon_Product (
+      coupon_id INT NOT NULL,
+      product_id INT NOT NULL,
+      PRIMARY KEY (coupon_id, product_id),
+      FOREIGN KEY (coupon_id) REFERENCES Coupon(coupon_id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES Product(product_id) ON DELETE CASCADE
+    )
+  `;
+};
+
+const calculateDiscountAmount = ({ coupon, eligibleSubtotal }) => {
+  const subtotal = Number(eligibleSubtotal || 0);
+  if (!coupon || subtotal <= 0) return 0;
+
+  const minOrder = Number(coupon.min_order_amount ?? 0);
+  if (subtotal < minOrder) return 0;
+
+  let discount = 0;
+  if (String(coupon.discount_type || "").toUpperCase() === "PERCENT") {
+    discount = (subtotal * Number(coupon.discount_value || 0)) / 100;
+    if (coupon.max_discount_amount !== null && coupon.max_discount_amount !== undefined) {
+      discount = Math.min(discount, Number(coupon.max_discount_amount));
+    }
+  } else if (String(coupon.discount_type || "").toUpperCase() === "FIXED") {
+    discount = Number(coupon.discount_value || 0);
+  }
+
+  if (!Number.isFinite(discount) || discount <= 0) return 0;
+  return Math.min(discount, subtotal);
+};
+
 const ensureOrderWorkflowSchema = async () => {
   await ensureOrderItemTable();
+  try {
+    await ensureCouponSchema();
+  } catch (error) {
+    console.warn("Skipping coupon schema migration:", error?.message || error);
+  }
   try {
     await ensureOrderSellerApprovalTable();
   } catch (error) {
@@ -438,6 +485,102 @@ export const getUserOrders = async (req, res) => {
   }
 };
 
+export const getAvailableCouponsForCheckout = async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    await ensureOrderWorkflowSchema();
+
+    const cartRows = await sql`
+      SELECT cart_id
+      FROM Cart
+      WHERE user_id = ${userId}
+      ORDER BY cart_id DESC
+      LIMIT 1
+    `;
+
+    if (cartRows.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const cartId = Number(cartRows[0].cart_id);
+    const cartItems = await sql`
+      SELECT p.product_id, p.seller_id,
+             ct.quantity,
+             COALESCE(pv.price, p.price) AS item_price
+      FROM Contains ct
+      JOIN Product_Variation pv ON ct.product_variation_id = pv.product_variation_id
+      JOIN Product p ON pv.product_id = p.product_id
+      WHERE ct.cart_id = ${cartId}
+    `;
+
+    if (cartItems.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const sellerIds = [...new Set(cartItems.map((item) => Number(item.seller_id)).filter((item) => Number.isFinite(item) && item > 0))];
+    if (sellerIds.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const coupons = await sql`
+      SELECT c.coupon_id, c.seller_id, c.coupon_name, c.code, c.description,
+             c.discount_type, c.discount_value, c.max_discount_amount, c.min_order_amount,
+             c.applies_all_products, c.start_date, c.end_date,
+             s.store_name,
+             COALESCE(array_agg(cp.product_id) FILTER (WHERE cp.product_id IS NOT NULL), '{}') AS product_ids
+      FROM Coupon c
+      JOIN Sellers s ON s.seller_id = c.seller_id
+      LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
+      WHERE c.seller_id = ANY(${sellerIds})
+        AND c.is_active = TRUE
+        AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
+      GROUP BY c.coupon_id, s.store_name
+      ORDER BY c.coupon_id DESC
+    `;
+
+    const mappedCoupons = coupons
+      .map((coupon) => {
+        const appliesAll = Boolean(coupon.applies_all_products);
+        const selectedProducts = Array.isArray(coupon.product_ids)
+          ? coupon.product_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+          : [];
+
+        const eligibleSubtotal = cartItems.reduce((sum, item) => {
+          const productId = Number(item.product_id);
+          const sellerId = Number(item.seller_id);
+          if (!Number.isFinite(productId) || sellerId !== Number(coupon.seller_id)) {
+            return sum;
+          }
+
+          if (!appliesAll && !selectedProducts.includes(productId)) {
+            return sum;
+          }
+
+          return sum + Number(item.item_price || 0) * Number(item.quantity || 0);
+        }, 0);
+
+        const estimatedDiscount = calculateDiscountAmount({ coupon, eligibleSubtotal });
+        if (estimatedDiscount <= 0) {
+          return null;
+        }
+
+        return {
+          ...coupon,
+          product_ids: selectedProducts,
+          eligible_subtotal: eligibleSubtotal,
+          estimated_discount: estimatedDiscount,
+        };
+      })
+      .filter(Boolean);
+
+    return res.status(200).json({ success: true, data: mappedCoupons });
+  } catch (error) {
+    console.error("Error in getAvailableCouponsForCheckout:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 // Create new order (with delivery address)
 export const createOrder = async (req, res) => {
   const {
@@ -476,6 +619,7 @@ export const createOrder = async (req, res) => {
       SELECT ct.product_variation_id, ct.quantity,
              COALESCE(pv.price, p.price) AS item_price,
              pv.stock_quantity,
+             p.product_id,
              p.seller_id,
              p.product_name,
              p.product_image,
@@ -502,49 +646,78 @@ export const createOrder = async (req, res) => {
       }
     }
 
-    let resolvedCouponId = coupon_id ?? null;
-    if (!resolvedCouponId && coupon_code) {
-      const coupon = await sql`
-        SELECT coupon_id
-        FROM Coupon
-        WHERE code = ${coupon_code}
-          AND is_active = TRUE
-          AND CURRENT_DATE BETWEEN start_date AND end_date
-        LIMIT 1
-      `;
-      resolvedCouponId = coupon[0]?.coupon_id ?? null;
-    }
-
     const subtotal = cartItems.reduce(
       (sum, item) => sum + Number(item.item_price || 0) * Number(item.quantity || 0),
       0
     );
 
+    let resolvedCouponId = coupon_id ?? null;
+    let couponDiscount = 0;
     let totalAmount = subtotal;
+    const normalizedCouponCode = String(coupon_code || "").trim().toUpperCase();
+
+    if (!resolvedCouponId && normalizedCouponCode) {
+      const coupon = await sql`
+        SELECT coupon_id
+        FROM Coupon
+        WHERE UPPER(TRIM(code)) = ${normalizedCouponCode}
+          AND is_active = TRUE
+          AND CURRENT_DATE BETWEEN start_date AND end_date
+        LIMIT 1
+      `;
+      resolvedCouponId = coupon[0]?.coupon_id ?? null;
+      if (!resolvedCouponId) {
+        return res.status(400).json({ success: false, message: "Coupon is invalid or expired" });
+      }
+    }
+
     if (resolvedCouponId) {
       const couponRows = await sql`
-        SELECT discount_type, discount_value, max_discount_amount, min_order_amount
-        FROM Coupon
-        WHERE coupon_id = ${resolvedCouponId}
+        SELECT c.coupon_id, c.seller_id, c.discount_type, c.discount_value,
+               c.max_discount_amount, c.min_order_amount, c.applies_all_products,
+               COALESCE(array_agg(cp.product_id) FILTER (WHERE cp.product_id IS NOT NULL), '{}') AS product_ids
+        FROM Coupon c
+        LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
+        WHERE c.coupon_id = ${resolvedCouponId}
+          AND c.is_active = TRUE
+          AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
+        GROUP BY c.coupon_id
       `;
 
-      if (couponRows.length > 0) {
-        const cp = couponRows[0];
-        const minOrder = Number(cp.min_order_amount ?? 0);
-
-        if (subtotal >= minOrder) {
-          let discount = 0;
-          if (cp.discount_type === 'PERCENT') {
-            discount = (subtotal * Number(cp.discount_value || 0)) / 100;
-            if (cp.max_discount_amount !== null) {
-              discount = Math.min(discount, Number(cp.max_discount_amount));
-            }
-          } else if (cp.discount_type === 'FIXED') {
-            discount = Number(cp.discount_value || 0);
-          }
-          totalAmount = Math.max(0, subtotal - discount);
-        }
+      if (couponRows.length === 0) {
+        return res.status(400).json({ success: false, message: "Coupon is invalid or expired" });
       }
+
+      const cp = couponRows[0];
+      const appliesAllProducts = Boolean(cp.applies_all_products);
+      const selectedProducts = Array.isArray(cp.product_ids)
+        ? cp.product_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+        : [];
+
+      const eligibleSubtotal = cartItems.reduce((sum, item) => {
+        const productSellerId = Number(item.seller_id);
+        if (productSellerId !== Number(cp.seller_id)) {
+          return sum;
+        }
+
+        const productId = Number(item.product_id);
+        if (!appliesAllProducts && !selectedProducts.includes(productId)) {
+          return sum;
+        }
+
+        return sum + Number(item.item_price || 0) * Number(item.quantity || 0);
+      }, 0);
+
+      if (eligibleSubtotal <= 0) {
+        return res.status(400).json({ success: false, message: "Coupon is not applicable to products in your cart" });
+      }
+
+      couponDiscount = calculateDiscountAmount({ coupon: cp, eligibleSubtotal });
+      if (couponDiscount <= 0) {
+        return res.status(400).json({ success: false, message: "Cart does not meet this coupon requirements" });
+      }
+
+      totalAmount = Math.max(0, subtotal - couponDiscount);
     }
 
     let resolvedAddressId = address_id ?? null;
@@ -648,7 +821,7 @@ export const createOrder = async (req, res) => {
 
     const createdItems = await sql`
       SELECT oi.order_item_id, pv.product_id, oi.product_variation_id, oi.quantity, oi.unit_price,
-             product_name, s.store_name AS seller_store_name, variation_type, variation_value, product_image
+            oi.product_name, s.store_name AS seller_store_name, oi.variation_type, oi.variation_value, oi.product_image
       FROM Order_Item oi
       JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
       LEFT JOIN Product p ON pv.product_id = p.product_id
@@ -662,6 +835,8 @@ export const createOrder = async (req, res) => {
       data: {
         ...newOrder,
         delivery_address_id: resolvedAddressId,
+        subtotal_amount: subtotal,
+        discount_amount: couponDiscount,
         total_amount: totalAmount,
         items: createdItems,
       },

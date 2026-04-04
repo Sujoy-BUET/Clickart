@@ -92,6 +92,8 @@ export const deleteSeller    = (id)   => request(`/sellers/${id}`, { method: 'DE
 export const addSellerEmail  = (id, body) => request(`/sellers/${id}/email`, { method: 'POST', body: JSON.stringify(body) });
 export const addSellerPhone  = (id, body) => request(`/sellers/${id}/phone`, { method: 'POST', body: JSON.stringify(body) });
 export const addSellerAddress = (id, body) => request(`/sellers/${id}/address`, { method: 'POST', body: JSON.stringify(body) });
+export const getSellerCoupons = async (id, activeOnly = false) => (await request(`/sellers/${id}/coupons${activeOnly ? '?active=true' : ''}`)).data;
+export const createSellerCoupon = (id, body) => request(`/sellers/${id}/coupons`, { method: 'POST', body: JSON.stringify(body) });
 export const adminVerifySeller = (id, token) => request(`/admin/sellers/${id}/verify`, {
   method: 'PATCH',
   headers: { Authorization: `Bearer ${token}` },
@@ -115,6 +117,7 @@ export const deleteCart      = (id)   => request(`/cart/${id}`, { method: 'DELET
 export const getOrders       = async ()     => (await request('/orders')).data;
 export const getOrder        = async (id)   => (await request(`/orders/${id}`)).data;
 export const getUserOrders   = async (uid)  => (await request(`/orders/user/${uid}`)).data;
+export const getAvailableCouponsForCheckout = async (uid) => (await request(`/orders/available-coupons/${uid}`)).data;
 export const getSellerOrders = async (sellerId) => (await request(`/orders/seller/${sellerId}`)).data;
 export const createOrder     = (body) => request('/orders', { method: 'POST', body: JSON.stringify(body) });
 export const updateOrderStatus = (id, body, token) => request(`/orders/${id}/status`, {

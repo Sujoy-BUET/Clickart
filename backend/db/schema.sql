@@ -8,6 +8,7 @@ DROP TABLE IF EXISTS Payment           CASCADE;
 DROP TABLE IF EXISTS Order_Item        CASCADE;
 DROP TABLE IF EXISTS Delivery_Address  CASCADE;
 DROP TABLE IF EXISTS Orders            CASCADE;
+DROP TABLE IF EXISTS Coupon_Product    CASCADE;
 DROP TABLE IF EXISTS Coupon            CASCADE;
 DROP TABLE IF EXISTS Contains          CASCADE;
 DROP TABLE IF EXISTS Cart              CASCADE;
@@ -190,15 +191,27 @@ CREATE TABLE IF NOT EXISTS Contains (
 
 CREATE TABLE IF NOT EXISTS Coupon (
     coupon_id SERIAL PRIMARY KEY,
+    seller_id INT NOT NULL,
+    coupon_name VARCHAR(120) NOT NULL,
     code VARCHAR(50) UNIQUE NOT NULL,
     description TEXT,
     discount_type VARCHAR(10) NOT NULL CHECK (discount_type IN ('PERCENT','FIXED')),
     discount_value DECIMAL(10,2) NOT NULL,
     max_discount_amount DECIMAL(10,2),
     min_order_amount DECIMAL(10,2),
+    applies_all_products BOOLEAN NOT NULL DEFAULT TRUE,
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (seller_id) REFERENCES Sellers(seller_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS Coupon_Product (
+    coupon_id INT NOT NULL,
+    product_id INT NOT NULL,
+    PRIMARY KEY (coupon_id, product_id),
+    FOREIGN KEY (coupon_id) REFERENCES Coupon(coupon_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES Product(product_id) ON DELETE CASCADE
 );
 
 -- ===================== ORDERS & DELIVERY =====================

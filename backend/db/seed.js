@@ -247,13 +247,26 @@ export async function seedData(sql) {
 
     /* ---------- Coupons ---------- */
     const coupons = [
-      { id: 1, code: "WELCOME10",  desc: "10% off for new users",  type: "PERCENT", val: 10.00, maxDisc: 200.00,  minOrder: 500.00,  start: "2025-01-01", end: "2026-12-31", active: true },
-      { id: 2, code: "FLAT50",     desc: "Flat 50 BDT off",        type: "FIXED",   val: 50.00, maxDisc: null,    minOrder: 300.00,  start: "2025-06-01", end: "2026-06-30", active: true },
+      { id: 1, sellerId: 1, name: "Welcome Offer", code: "WELCOME10", desc: "10% off for selected phones", type: "PERCENT", val: 10.00, maxDisc: 200.00, minOrder: 500.00, appliesAll: false, start: "2025-01-01", end: "2026-12-31", active: true },
+      { id: 2, sellerId: 2, name: "Flat Discount", code: "FLAT50", desc: "Flat 50 BDT off", type: "FIXED", val: 50.00, maxDisc: null, minOrder: 300.00, appliesAll: true, start: "2025-06-01", end: "2026-06-30", active: true },
     ];
     for (const cp of coupons) {
       await sql`
-        INSERT INTO Coupon (coupon_id, code, description, discount_type, discount_value, max_discount_amount, min_order_amount, start_date, end_date, is_active)
-        VALUES (${cp.id}, ${cp.code}, ${cp.desc}, ${cp.type}, ${cp.val}, ${cp.maxDisc}, ${cp.minOrder}, ${cp.start}, ${cp.end}, ${cp.active})
+        INSERT INTO Coupon (coupon_id, seller_id, coupon_name, code, description, discount_type, discount_value, max_discount_amount, min_order_amount, applies_all_products, start_date, end_date, is_active)
+        VALUES (${cp.id}, ${cp.sellerId}, ${cp.name}, ${cp.code}, ${cp.desc}, ${cp.type}, ${cp.val}, ${cp.maxDisc}, ${cp.minOrder}, ${cp.appliesAll}, ${cp.start}, ${cp.end}, ${cp.active})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    const couponProducts = [
+      { couponId: 1, productId: 1 },
+      { couponId: 1, productId: 2 },
+    ];
+
+    for (const cp of couponProducts) {
+      await sql`
+        INSERT INTO Coupon_Product (coupon_id, product_id)
+        VALUES (${cp.couponId}, ${cp.productId})
         ON CONFLICT DO NOTHING
       `;
     }

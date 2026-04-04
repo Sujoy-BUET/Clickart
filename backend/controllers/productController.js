@@ -2,6 +2,27 @@ import { sql } from "../config/db.js";
 
 const ARCHIVED_SELLER_NAME = "__archived_seller__";
 
+const ensureProductCouponSchema = async () => {
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS seller_id INT
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS coupon_name VARCHAR(120)
+  `;
+  await sql`
+    ALTER TABLE Coupon ADD COLUMN IF NOT EXISTS applies_all_products BOOLEAN DEFAULT TRUE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS Coupon_Product (
+      coupon_id INT NOT NULL,
+      product_id INT NOT NULL,
+      PRIMARY KEY (coupon_id, product_id),
+      FOREIGN KEY (coupon_id) REFERENCES Coupon(coupon_id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES Product(product_id) ON DELETE CASCADE
+    )
+  `;
+};
+
 const getVerifiedSeller = async (sellerId) => {
   const normalizedSellerId = Number(sellerId);
   if (Number.isNaN(normalizedSellerId) || normalizedSellerId <= 0) {
@@ -306,6 +327,8 @@ export const getProduct = async (req, res) => {
   const { id } = req.params;
 
   try {
+    await ensureProductCouponSchema();
+
     const product = await sql`
       SELECT p.*, b.brand_name, c.category_name, s.store_name,
              CASE 
@@ -340,7 +363,24 @@ export const getProduct = async (req, res) => {
       ORDER BY pv.product_variation_id ASC
     `;
 
-    res.status(200).json({ success: true, data: { ...product[0], variations } });
+    const coupons = await sql`
+      SELECT c.coupon_id, c.coupon_name, c.code, c.description,
+             c.discount_type, c.discount_value, c.max_discount_amount,
+             c.min_order_amount, c.start_date, c.end_date, c.applies_all_products
+      FROM Coupon c
+      LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
+      WHERE c.seller_id = ${product[0].seller_id}
+        AND c.is_active = TRUE
+        AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
+        AND (
+          c.applies_all_products = TRUE
+          OR cp.product_id = ${id}
+        )
+      GROUP BY c.coupon_id
+      ORDER BY c.coupon_id DESC
+    `;
+
+    res.status(200).json({ success: true, data: { ...product[0], variations, coupons } });
   } catch (error) {
     console.error("Error in getProduct:", error);
     res.status(500).json({ success: false, message: "Internal Server Error" });

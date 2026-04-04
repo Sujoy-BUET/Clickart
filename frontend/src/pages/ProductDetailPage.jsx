@@ -189,6 +189,34 @@ export default function ProductDetailPage() {
 
           <p className="text-sm text-gray-400 leading-relaxed">{product.description || 'No description available.'}</p>
 
+          {Array.isArray(product.coupons) && product.coupons.length > 0 && (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-emerald-300">Available Coupons</p>
+              <div className="space-y-2">
+                {product.coupons.map((coupon) => (
+                  <div key={coupon.coupon_id} className="rounded-lg border border-emerald-500/25 bg-gray-900/40 px-3 py-2">
+                    <p className="text-sm font-semibold text-emerald-200">
+                      {coupon.coupon_name || coupon.code}
+                      <span className="ml-2 rounded bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-300">{coupon.code}</span>
+                    </p>
+                    <p className="mt-1 text-xs text-gray-300">
+                      {coupon.discount_type === 'PERCENT'
+                        ? `${Number(coupon.discount_value || 0)}% off`
+                        : `৳${Number(coupon.discount_value || 0)} off`}
+                      {coupon.min_order_amount ? ` | Min order ৳${Number(coupon.min_order_amount).toLocaleString('en-BD')}` : ''}
+                      {coupon.discount_type === 'PERCENT' && coupon.max_discount_amount
+                        ? ` | Max discount ৳${Number(coupon.max_discount_amount).toLocaleString('en-BD')}`
+                        : ''}
+                    </p>
+                    {coupon.description && (
+                      <p className="mt-1 text-xs text-gray-400">{coupon.description}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Variations */}
           {product.variations?.length > 0 && (
             <div>

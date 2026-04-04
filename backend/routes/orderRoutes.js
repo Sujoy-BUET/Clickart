@@ -2,6 +2,7 @@ import express from "express";
 import {
   createOrder,
   deleteOrder,
+  getAvailableCouponsForCheckout,
   getOrder,
   getOrders,
   getSellerOrders,
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.get("/", getOrders);
 router.get("/user/:userId", getUserOrders);
+router.get("/available-coupons/:userId", getAvailableCouponsForCheckout);
 router.get("/seller/:sellerId", getSellerOrders);
 router.get("/:id", getOrder);
 router.post("/", createOrder);
