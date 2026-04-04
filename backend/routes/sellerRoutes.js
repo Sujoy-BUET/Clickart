@@ -13,6 +13,7 @@ import {
   getSellerSalesSummary,
   getSellerCoupons,
   createSellerCoupon,
+  deleteSellerCoupon,
   updateSellerProfile,
 } from "../controllers/sellerController.js";
 import { requireAdminAuth } from "../lib/adminAuth.js";
@@ -27,6 +28,7 @@ router.get("/:id/sales-summary", getSellerSalesSummary);
 router.get("/:id/coupons", getSellerCoupons);
 router.post("/", createSeller);
 router.post("/:id/coupons", createSellerCoupon);
+router.delete("/:id/coupons/:couponId", deleteSellerCoupon);
 router.put("/:id", updateSeller);
 router.put("/:id/profile", updateSellerProfile);
 router.delete("/:id", requireAdminAuth, deleteSeller);

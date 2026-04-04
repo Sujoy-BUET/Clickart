@@ -94,6 +94,7 @@ export const addSellerPhone  = (id, body) => request(`/sellers/${id}/phone`, { m
 export const addSellerAddress = (id, body) => request(`/sellers/${id}/address`, { method: 'POST', body: JSON.stringify(body) });
 export const getSellerCoupons = async (id, activeOnly = false) => (await request(`/sellers/${id}/coupons${activeOnly ? '?active=true' : ''}`)).data;
 export const createSellerCoupon = (id, body) => request(`/sellers/${id}/coupons`, { method: 'POST', body: JSON.stringify(body) });
+export const deleteSellerCoupon = (id, couponId) => request(`/sellers/${id}/coupons/${couponId}`, { method: 'DELETE' });
 export const adminVerifySeller = (id, token) => request(`/admin/sellers/${id}/verify`, {
   method: 'PATCH',
   headers: { Authorization: `Bearer ${token}` },

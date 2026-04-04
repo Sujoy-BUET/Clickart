@@ -127,6 +127,18 @@ export const createSellerCoupon = async (req, res) => {
   const normalizedType = String(discount_type || "").trim().toUpperCase();
   const normalizedProductIds = toNumericArray(product_ids);
   const appliesAllProducts = toBoolean(applies_all_products, true);
+  const normalizedDescription = description === undefined || description === null
+    ? null
+    : String(description).trim() || null;
+  const discountNumber = Number(discount_value);
+  const minOrderNumber = min_order_amount === undefined || min_order_amount === null || min_order_amount === ""
+    ? null
+    : Number(min_order_amount);
+  const maxDiscountNumber = max_discount_amount === undefined || max_discount_amount === null || max_discount_amount === ""
+    ? null
+    : Number(max_discount_amount);
+  const parsedStartDate = new Date(start_date);
+  const parsedEndDate = new Date(end_date);
 
   if (!normalizedName || !normalizedCode || !normalizedType || discount_value === undefined || !start_date || !end_date) {
     return res.status(400).json({
@@ -139,13 +151,43 @@ export const createSellerCoupon = async (req, res) => {
     return res.status(400).json({ success: false, message: "discount_type must be PERCENT or FIXED" });
   }
 
-  if (new Date(start_date).getTime() > new Date(end_date).getTime()) {
+  if (normalizedName.length > 120) {
+    return res.status(400).json({ success: false, message: "coupon_name must be at most 120 characters" });
+  }
+
+  if (!/^[A-Z0-9_-]{3,50}$/.test(normalizedCode)) {
+    return res.status(400).json({
+      success: false,
+      message: "code must be 3-50 characters (A-Z, 0-9, _ or - only)",
+    });
+  }
+
+  if (Number.isNaN(parsedStartDate.getTime()) || Number.isNaN(parsedEndDate.getTime())) {
+    return res.status(400).json({ success: false, message: "start_date and end_date must be valid dates" });
+  }
+
+  if (parsedStartDate.getTime() > parsedEndDate.getTime()) {
     return res.status(400).json({ success: false, message: "start_date must be before end_date" });
   }
 
-  const discountNumber = Number(discount_value);
   if (!Number.isFinite(discountNumber) || discountNumber <= 0) {
     return res.status(400).json({ success: false, message: "discount_value must be a positive number" });
+  }
+
+  if (normalizedType === "PERCENT" && discountNumber > 100) {
+    return res.status(400).json({ success: false, message: "Percent coupons cannot exceed 100" });
+  }
+
+  if (minOrderNumber !== null && (!Number.isFinite(minOrderNumber) || minOrderNumber < 0)) {
+    return res.status(400).json({ success: false, message: "min_order_amount must be a non-negative number" });
+  }
+
+  if (normalizedType === "PERCENT") {
+    if (maxDiscountNumber !== null && (!Number.isFinite(maxDiscountNumber) || maxDiscountNumber <= 0)) {
+      return res.status(400).json({ success: false, message: "max_discount_amount must be a positive number" });
+    }
+  } else if (maxDiscountNumber !== null) {
+    return res.status(400).json({ success: false, message: "max_discount_amount is only valid for PERCENT coupons" });
   }
 
   if (!appliesAllProducts && normalizedProductIds.length === 0) {
@@ -198,11 +240,11 @@ export const createSellerCoupon = async (req, res) => {
         ${id},
         ${normalizedName},
         ${normalizedCode},
-        ${description ?? null},
+        ${normalizedDescription},
         ${normalizedType},
         ${discountNumber},
-        ${max_discount_amount ?? null},
-        ${min_order_amount ?? null},
+        ${normalizedType === "PERCENT" ? maxDiscountNumber : null},
+        ${minOrderNumber},
         ${appliesAllProducts},
         ${start_date},
         ${end_date},
@@ -245,6 +287,80 @@ export const createSellerCoupon = async (req, res) => {
     }
 
     console.error("Error in createSellerCoupon:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
+export const deleteSellerCoupon = async (req, res) => {
+  const { id, couponId } = req.params;
+  const sellerId = Number(id);
+  const normalizedCouponId = Number(couponId);
+
+  if (!Number.isFinite(sellerId) || sellerId <= 0 || !Number.isFinite(normalizedCouponId) || normalizedCouponId <= 0) {
+    return res.status(400).json({ success: false, message: "Valid seller id and coupon id are required" });
+  }
+
+  try {
+    await ensureSellerCouponSchema();
+
+    const sellerRows = await sql`
+      SELECT seller_id
+      FROM Sellers
+      WHERE seller_id = ${sellerId}
+      LIMIT 1
+    `;
+
+    if (sellerRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Seller not found" });
+    }
+
+    const couponRows = await sql`
+      SELECT coupon_id, seller_id, code
+      FROM Coupon
+      WHERE coupon_id = ${normalizedCouponId}
+        AND seller_id = ${sellerId}
+      LIMIT 1
+    `;
+
+    if (couponRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Coupon not found for this seller" });
+    }
+
+    const orderUsage = await sql`
+      SELECT order_id
+      FROM Orders
+      WHERE coupon_id = ${normalizedCouponId}
+      LIMIT 1
+    `;
+
+    if (orderUsage.length > 0) {
+      await sql`
+        UPDATE Coupon
+        SET is_active = FALSE,
+            end_date = LEAST(end_date, CURRENT_DATE)
+        WHERE coupon_id = ${normalizedCouponId}
+      `;
+
+      return res.status(200).json({
+        success: true,
+        message: "Coupon is used in existing orders, so it has been deactivated instead of deleted",
+        data: { coupon_id: normalizedCouponId, deleted: false, deactivated: true },
+      });
+    }
+
+    await sql`
+      DELETE FROM Coupon
+      WHERE coupon_id = ${normalizedCouponId}
+        AND seller_id = ${sellerId}
+    `;
+
+    return res.status(200).json({
+      success: true,
+      message: "Coupon deleted successfully",
+      data: { coupon_id: normalizedCouponId, deleted: true, deactivated: false },
+    });
+  } catch (error) {
+    console.error("Error in deleteSellerCoupon:", error);
     return res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
@@ -702,11 +818,142 @@ export const getSellerSalesSummary = async (req, res) => {
     `;
 
     const salesHistory = await sql`
+      WITH order_totals AS (
+        SELECT
+          oi_all.order_id,
+          COALESCE(SUM(oi_all.quantity * oi_all.unit_price), 0)::NUMERIC(12,2) AS order_subtotal
+        FROM Order_Item oi_all
+        GROUP BY oi_all.order_id
+      ),
+      seller_items AS (
+        SELECT
+          oi.order_id,
+          pv.product_id,
+          oi.quantity,
+          (oi.quantity * oi.unit_price)::NUMERIC(12,2) AS line_total
+        FROM Order_Item oi
+        JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
+        JOIN Product p ON pv.product_id = p.product_id
+        WHERE p.seller_id = ${id}
+      ),
+      coupon_eligible AS (
+        SELECT
+          o.order_id,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN cp.applies_all_products = TRUE OR cpp.product_id IS NOT NULL THEN si.line_total
+                ELSE 0
+              END
+            ),
+            0
+          )::NUMERIC(12,2) AS eligible_subtotal,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN cp.applies_all_products = TRUE OR cpp.product_id IS NOT NULL THEN si.quantity
+                ELSE 0
+              END
+            ),
+            0
+          )::INT AS eligible_quantity
+        FROM Orders o
+        JOIN Coupon cp ON cp.coupon_id = o.coupon_id
+        JOIN seller_items si ON si.order_id = o.order_id
+        LEFT JOIN Coupon_Product cpp ON cpp.coupon_id = cp.coupon_id AND cpp.product_id = si.product_id
+        GROUP BY o.order_id
+      )
       SELECT
         oi.order_item_id,
         oi.order_id,
         o.order_date,
         o.order_status,
+        ot.order_subtotal,
+        o.total_amount AS order_total_amount,
+        GREATEST(0, COALESCE(ot.order_subtotal, 0) - COALESCE(o.total_amount, 0))::NUMERIC(12,2) AS order_discount_amount,
+        COALESCE(ce.eligible_subtotal, 0)::NUMERIC(12,2) AS coupon_eligible_subtotal,
+        COALESCE(ce.eligible_quantity, 0)::INT AS coupon_eligible_quantity,
+        (
+          CASE
+            WHEN cp.coupon_id IS NULL THEN 0
+            WHEN COALESCE(ce.eligible_subtotal, 0) < COALESCE(cp.min_order_amount, 0) THEN 0
+            WHEN UPPER(cp.discount_type) = 'PERCENT' THEN
+              LEAST(
+                COALESCE(ce.eligible_subtotal, 0),
+                LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0,
+                COALESCE(cp.max_discount_amount, LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0)
+              )
+            WHEN UPPER(cp.discount_type) = 'FIXED' THEN
+              LEAST(COALESCE(ce.eligible_subtotal, 0), COALESCE(cp.discount_value, 0) * COALESCE(ce.eligible_quantity, 0))
+            ELSE 0
+          END
+        )::NUMERIC(12,2) AS estimated_discount_amount,
+        (
+          CASE
+            WHEN GREATEST(0, COALESCE(ot.order_subtotal, 0) - COALESCE(o.total_amount, 0)) > 0
+              THEN GREATEST(0, COALESCE(ot.order_subtotal, 0) - COALESCE(o.total_amount, 0))
+            ELSE
+              (
+                CASE
+                  WHEN cp.coupon_id IS NULL THEN 0
+                  WHEN COALESCE(ce.eligible_subtotal, 0) < COALESCE(cp.min_order_amount, 0) THEN 0
+                  WHEN UPPER(cp.discount_type) = 'PERCENT' THEN
+                    LEAST(
+                      COALESCE(ce.eligible_subtotal, 0),
+                      LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0,
+                      COALESCE(cp.max_discount_amount, LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0)
+                    )
+                  WHEN UPPER(cp.discount_type) = 'FIXED' THEN
+                    LEAST(COALESCE(ce.eligible_subtotal, 0), COALESCE(cp.discount_value, 0) * COALESCE(ce.eligible_quantity, 0))
+                  ELSE 0
+                END
+              )
+          END
+        )::NUMERIC(12,2) AS display_discount_amount,
+        (
+          CASE
+            WHEN GREATEST(0, COALESCE(ot.order_subtotal, 0) - COALESCE(o.total_amount, 0)) > 0
+              THEN COALESCE(o.total_amount, 0)
+            ELSE GREATEST(
+              0,
+              COALESCE(ot.order_subtotal, 0) -
+              (
+                CASE
+                  WHEN cp.coupon_id IS NULL THEN 0
+                  WHEN COALESCE(ce.eligible_subtotal, 0) < COALESCE(cp.min_order_amount, 0) THEN 0
+                  WHEN UPPER(cp.discount_type) = 'PERCENT' THEN
+                    LEAST(
+                      COALESCE(ce.eligible_subtotal, 0),
+                      LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0,
+                      COALESCE(cp.max_discount_amount, LEAST(100, GREATEST(0, COALESCE(cp.discount_value, 0))) * COALESCE(ce.eligible_subtotal, 0) / 100.0)
+                    )
+                  WHEN UPPER(cp.discount_type) = 'FIXED' THEN
+                    LEAST(COALESCE(ce.eligible_subtotal, 0), COALESCE(cp.discount_value, 0) * COALESCE(ce.eligible_quantity, 0))
+                  ELSE 0
+                END
+              )
+            )
+          END
+        )::NUMERIC(12,2) AS display_final_amount,
+        cp.code AS coupon_code,
+        cp.coupon_name,
+        cp.discount_type,
+        cp.discount_value,
+        cp.max_discount_amount,
+        cp.min_order_amount,
+        cp.applies_all_products,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object('product_id', p2.product_id, 'product_name', p2.product_name)
+              ORDER BY p2.product_name
+            )
+            FROM Coupon_Product cp2
+            JOIN Product p2 ON p2.product_id = cp2.product_id
+            WHERE cp2.coupon_id = cp.coupon_id
+          ),
+          '[]'::json
+        ) AS coupon_products,
         pv.product_id,
         oi.product_name,
         oi.quantity,
@@ -718,6 +965,9 @@ export const getSellerSalesSummary = async (req, res) => {
       JOIN Product_Variation pv ON oi.product_variation_id = pv.product_variation_id
       JOIN Product p ON pv.product_id = p.product_id
       JOIN Orders o ON oi.order_id = o.order_id
+      LEFT JOIN order_totals ot ON ot.order_id = o.order_id
+      LEFT JOIN coupon_eligible ce ON ce.order_id = o.order_id
+      LEFT JOIN Coupon cp ON o.coupon_id = cp.coupon_id
       WHERE p.seller_id = ${id}
         AND o.order_status IN ('DELIVERED', 'SUCCESSFUL')
       ORDER BY o.order_date DESC, oi.order_item_id DESC

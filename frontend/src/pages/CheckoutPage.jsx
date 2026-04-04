@@ -51,7 +51,7 @@ export default function CheckoutPage() {
     country: 'Bangladesh',
   });
 
-  const [couponCode, setCouponCode] = useState('');
+  const [selectedCouponCodes, setSelectedCouponCodes] = useState([]);
   const [availableCoupons, setAvailableCoupons] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('COD');
   const [pendingPayment, setPendingPayment] = useState(null);
@@ -72,12 +72,10 @@ export default function CheckoutPage() {
     const coupons = Array.isArray(rows) ? rows : [];
     setAvailableCoupons(coupons);
 
-    if (couponCode) {
-      const stillAvailable = coupons.some((coupon) => String(coupon.code || '').toUpperCase() === String(couponCode).trim().toUpperCase());
-      if (!stillAvailable) {
-        setCouponCode('');
-      }
-    }
+    setSelectedCouponCodes((prev) => {
+      const allowed = new Set(coupons.map((coupon) => String(coupon.code || '').trim().toUpperCase()));
+      return prev.filter((code) => allowed.has(String(code || '').trim().toUpperCase()));
+    });
   };
 
   const handleRefreshCart = async () => {
@@ -175,14 +173,72 @@ export default function CheckoutPage() {
     [items]
   );
 
-  const selectedCoupon = useMemo(() => {
-    const normalizedCode = String(couponCode || '').trim().toUpperCase();
-    if (!normalizedCode) return null;
-    return availableCoupons.find((coupon) => String(coupon.code || '').toUpperCase() === normalizedCode) || null;
-  }, [availableCoupons, couponCode]);
+  const selectedCoupons = useMemo(() => {
+    if (!Array.isArray(selectedCouponCodes) || selectedCouponCodes.length === 0) return [];
 
-  const discountAmount = Number(selectedCoupon?.estimated_discount || 0);
+    const selectedSet = new Set(selectedCouponCodes.map((code) => String(code || '').trim().toUpperCase()));
+    return availableCoupons.filter((coupon) => selectedSet.has(String(coupon.code || '').trim().toUpperCase()));
+  }, [availableCoupons, selectedCouponCodes]);
+
+  const discountAmount = selectedCoupons.reduce(
+    (sum, coupon) => sum + Number(coupon?.estimated_discount || 0),
+    0
+  );
   const payableTotal = Math.max(0, total - discountAmount);
+
+  const toggleCouponSelection = (couponCodeValue) => {
+    setError('');
+    const normalized = String(couponCodeValue || '').trim().toUpperCase();
+    if (!normalized) return;
+
+    const targetCoupon = availableCoupons.find((coupon) => String(coupon.code || '').trim().toUpperCase() === normalized);
+    if (!targetCoupon) return;
+
+    const targetSellerId = Number(targetCoupon.seller_id);
+
+    const getCouponProductIds = (coupon) => {
+      if (!coupon || !Array.isArray(coupon.product_ids)) return [];
+      return coupon.product_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+    };
+
+    setSelectedCouponCodes((prev) => {
+      const normalizedPrev = prev.map((code) => String(code || '').trim().toUpperCase());
+      if (normalizedPrev.includes(normalized)) {
+        return normalizedPrev.filter((code) => code !== normalized);
+      }
+
+      const sameSellerCoupons = normalizedPrev
+        .map((existingCode) => availableCoupons.find((coupon) => String(coupon.code || '').trim().toUpperCase() === existingCode))
+        .filter((coupon) => Number(coupon?.seller_id) === targetSellerId);
+
+      if (targetCoupon.applies_all_products) {
+        const withoutSameSeller = normalizedPrev.filter((existingCode) => {
+          const existingCoupon = availableCoupons.find((coupon) => String(coupon.code || '').trim().toUpperCase() === existingCode);
+          return Number(existingCoupon?.seller_id) !== targetSellerId;
+        });
+        setNotice('All-products coupon selected for this store. Other coupons from this store were removed.');
+        return [...withoutSameSeller, normalized];
+      }
+
+      const hasAllProductsCoupon = sameSellerCoupons.some((coupon) => Boolean(coupon?.applies_all_products));
+      if (hasAllProductsCoupon) {
+        setError('Cannot add individual coupon while an all-products coupon is selected for this store.');
+        return normalizedPrev;
+      }
+
+      const targetProducts = new Set(getCouponProductIds(targetCoupon));
+      for (const existingCoupon of sameSellerCoupons) {
+        const existingProducts = getCouponProductIds(existingCoupon);
+        const overlap = existingProducts.some((productId) => targetProducts.has(productId));
+        if (overlap) {
+          setError('Cannot combine coupons that target the same product in this store.');
+          return normalizedPrev;
+        }
+      }
+
+      return [...normalizedPrev, normalized];
+    });
+  };
 
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
@@ -236,7 +292,7 @@ export default function CheckoutPage() {
       const orderPayload = {
         user_id: userId,
         cart_id: Number(cartId),
-        coupon_code: couponCode.trim() || undefined,
+        coupon_codes: selectedCoupons.map((coupon) => String(coupon.code || '').trim()).filter(Boolean),
       };
 
       if (addressMode === 'default') {
@@ -515,24 +571,51 @@ export default function CheckoutPage() {
             <p className="text-sm text-gray-500">No eligible coupon available for this cart.</p>
           ) : (
             <>
-              <select
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 outline-none focus:border-violet-500"
-              >
-                <option value="">Select a coupon (optional)</option>
-                {availableCoupons.map((coupon) => (
-                  <option key={coupon.coupon_id} value={coupon.code}>
-                    {coupon.code} - {coupon.coupon_name || 'Coupon'} ({coupon.discount_type === 'PERCENT' ? `${Number(coupon.discount_value || 0)}%` : `৳${Number(coupon.discount_value || 0)}`} from {coupon.store_name})
-                  </option>
-                ))}
-              </select>
+              <p className="text-xs text-gray-400">You can combine multiple coupons. For the same store: all-products coupon is exclusive, and overlapping product coupons are blocked.</p>
 
-              {selectedCoupon && (
-                <p className="text-xs text-emerald-300">
-                  Estimated discount: ৳{discountAmount.toLocaleString('en-BD')} on eligible subtotal ৳{Number(selectedCoupon.eligible_subtotal || 0).toLocaleString('en-BD')}
-                </p>
-              )}
+              <div className="space-y-2">
+                {availableCoupons.map((coupon) => {
+                  const normalizedCode = String(coupon.code || '').trim().toUpperCase();
+                  const checked = selectedCouponCodes.some((code) => String(code || '').trim().toUpperCase() === normalizedCode);
+
+                  return (
+                    <label
+                      key={coupon.coupon_id}
+                      className={`block rounded-lg border px-3 py-2 transition ${
+                        checked
+                          ? 'border-emerald-500/40 bg-emerald-500/10'
+                          : 'border-gray-700 bg-gray-800/60 hover:border-gray-600'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleCouponSelection(coupon.code)}
+                          className="mt-0.5 rounded border-gray-600 bg-gray-900"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm text-gray-100">
+                            <span className="font-semibold text-violet-300">{coupon.code}</span>
+                            {' - '}
+                            {coupon.coupon_name || 'Coupon'}
+                            {' ('}
+                            {coupon.discount_type === 'PERCENT'
+                              ? `${Number(coupon.discount_value || 0)}%`
+                              : `৳${Number(coupon.discount_value || 0)}`}
+                            {' from '}
+                            {coupon.store_name}
+                            {')'}
+                          </p>
+                          <p className="mt-1 text-xs text-emerald-300">
+                            Estimated discount: ৳{Number(coupon.estimated_discount || 0).toLocaleString('en-BD')} on eligible subtotal ৳{Number(coupon.eligible_subtotal || 0).toLocaleString('en-BD')}
+                          </p>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
             </>
           )}
         </div>
@@ -581,6 +664,16 @@ export default function CheckoutPage() {
             <span className="text-gray-400">Discount</span>
             <span className="font-semibold text-emerald-300">-৳{discountAmount.toLocaleString('en-BD')}</span>
           </div>
+          {selectedCoupons.length > 0 && (
+            <div className="mt-2 space-y-1 text-xs text-gray-400">
+              {selectedCoupons.map((coupon) => (
+                <div key={coupon.coupon_id} className="flex justify-between">
+                  <span>{coupon.code} ({coupon.store_name})</span>
+                  <span className="text-emerald-300">-৳{Number(coupon.estimated_discount || 0).toLocaleString('en-BD')}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-2 pt-2 border-t border-gray-800 flex justify-between">
             <span className="font-semibold text-gray-200">Payable Total</span>
             <span className="text-xl font-bold text-violet-400">৳{payableTotal.toLocaleString('en-BD')}</span>

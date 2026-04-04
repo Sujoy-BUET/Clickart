@@ -88,8 +88,9 @@ const ensureCouponSchema = async () => {
   `;
 };
 
-const calculateDiscountAmount = ({ coupon, eligibleSubtotal }) => {
+const calculateDiscountAmount = ({ coupon, eligibleSubtotal, eligibleQuantity = 0 }) => {
   const subtotal = Number(eligibleSubtotal || 0);
+  const quantity = Number(eligibleQuantity || 0);
   if (!coupon || subtotal <= 0) return 0;
 
   const minOrder = Number(coupon.min_order_amount ?? 0);
@@ -97,12 +98,14 @@ const calculateDiscountAmount = ({ coupon, eligibleSubtotal }) => {
 
   let discount = 0;
   if (String(coupon.discount_type || "").toUpperCase() === "PERCENT") {
-    discount = (subtotal * Number(coupon.discount_value || 0)) / 100;
+    const normalizedPercent = Math.min(100, Math.max(0, Number(coupon.discount_value || 0)));
+    discount = (subtotal * normalizedPercent) / 100;
     if (coupon.max_discount_amount !== null && coupon.max_discount_amount !== undefined) {
       discount = Math.min(discount, Number(coupon.max_discount_amount));
     }
   } else if (String(coupon.discount_type || "").toUpperCase() === "FIXED") {
-    discount = Number(coupon.discount_value || 0);
+    // FIXED coupons are per eligible item quantity.
+    discount = Number(coupon.discount_value || 0) * Math.max(0, quantity);
   }
 
   if (!Number.isFinite(discount) || discount <= 0) return 0;
@@ -560,7 +563,21 @@ export const getAvailableCouponsForCheckout = async (req, res) => {
           return sum + Number(item.item_price || 0) * Number(item.quantity || 0);
         }, 0);
 
-        const estimatedDiscount = calculateDiscountAmount({ coupon, eligibleSubtotal });
+        const eligibleQuantity = cartItems.reduce((sum, item) => {
+          const productId = Number(item.product_id);
+          const sellerId = Number(item.seller_id);
+          if (!Number.isFinite(productId) || sellerId !== Number(coupon.seller_id)) {
+            return sum;
+          }
+
+          if (!appliesAll && !selectedProducts.includes(productId)) {
+            return sum;
+          }
+
+          return sum + Number(item.quantity || 0);
+        }, 0);
+
+        const estimatedDiscount = calculateDiscountAmount({ coupon, eligibleSubtotal, eligibleQuantity });
         if (estimatedDiscount <= 0) {
           return null;
         }
@@ -587,7 +604,9 @@ export const createOrder = async (req, res) => {
     user_id,
     cart_id,
     coupon_id,
+    coupon_ids,
     coupon_code,
+    coupon_codes,
     address_id,
     use_default_address,
     new_address,
@@ -654,70 +673,171 @@ export const createOrder = async (req, res) => {
     let resolvedCouponId = coupon_id ?? null;
     let couponDiscount = 0;
     let totalAmount = subtotal;
-    const normalizedCouponCode = String(coupon_code || "").trim().toUpperCase();
 
-    if (!resolvedCouponId && normalizedCouponCode) {
-      const coupon = await sql`
-        SELECT coupon_id
+    const normalizedSingleCouponCode = String(coupon_code || "").trim().toUpperCase();
+    const normalizedCouponCodes = [
+      ...new Set(
+        [
+          ...((Array.isArray(coupon_codes) ? coupon_codes : []).map((value) => String(value || "").trim().toUpperCase())),
+          normalizedSingleCouponCode,
+        ].filter(Boolean)
+      ),
+    ];
+
+    const requestedCouponIds = [
+      ...(resolvedCouponId !== null && resolvedCouponId !== undefined ? [Number(resolvedCouponId)] : []),
+      ...((Array.isArray(coupon_ids) ? coupon_ids : []).map((value) => Number(value))),
+    ].filter((value) => Number.isFinite(value) && value > 0);
+
+    const resolvedCouponIdsSet = new Set(requestedCouponIds);
+
+    if (normalizedCouponCodes.length > 0) {
+      const couponMatches = await sql`
+        SELECT coupon_id, UPPER(TRIM(code)) AS normalized_code
         FROM Coupon
-        WHERE UPPER(TRIM(code)) = ${normalizedCouponCode}
+        WHERE UPPER(TRIM(code)) = ANY(${normalizedCouponCodes})
           AND is_active = TRUE
           AND CURRENT_DATE BETWEEN start_date AND end_date
-        LIMIT 1
       `;
-      resolvedCouponId = coupon[0]?.coupon_id ?? null;
-      if (!resolvedCouponId) {
-        return res.status(400).json({ success: false, message: "Coupon is invalid or expired" });
+
+      const codeToId = new Map(couponMatches.map((row) => [row.normalized_code, Number(row.coupon_id)]));
+      const invalidCodes = normalizedCouponCodes.filter((code) => !codeToId.has(code));
+      if (invalidCodes.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Coupon is invalid or expired: ${invalidCodes.join(', ')}`,
+        });
+      }
+
+      for (const code of normalizedCouponCodes) {
+        resolvedCouponIdsSet.add(Number(codeToId.get(code)));
       }
     }
 
-    if (resolvedCouponId) {
+    const resolvedCouponIds = Array.from(resolvedCouponIdsSet);
+
+    if (resolvedCouponIds.length > 0) {
       const couponRows = await sql`
-        SELECT c.coupon_id, c.seller_id, c.discount_type, c.discount_value,
+        SELECT c.coupon_id, c.code, c.seller_id, c.discount_type, c.discount_value,
                c.max_discount_amount, c.min_order_amount, c.applies_all_products,
                COALESCE(array_agg(cp.product_id) FILTER (WHERE cp.product_id IS NOT NULL), '{}') AS product_ids
         FROM Coupon c
         LEFT JOIN Coupon_Product cp ON cp.coupon_id = c.coupon_id
-        WHERE c.coupon_id = ${resolvedCouponId}
+        WHERE c.coupon_id = ANY(${resolvedCouponIds})
           AND c.is_active = TRUE
           AND CURRENT_DATE BETWEEN c.start_date AND c.end_date
         GROUP BY c.coupon_id
       `;
 
-      if (couponRows.length === 0) {
-        return res.status(400).json({ success: false, message: "Coupon is invalid or expired" });
+      if (couponRows.length !== resolvedCouponIds.length) {
+        return res.status(400).json({ success: false, message: "One or more selected coupons are invalid or expired" });
       }
 
-      const cp = couponRows[0];
-      const appliesAllProducts = Boolean(cp.applies_all_products);
-      const selectedProducts = Array.isArray(cp.product_ids)
-        ? cp.product_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
-        : [];
+      const couponById = new Map(couponRows.map((row) => [Number(row.coupon_id), row]));
+      const sellerCouponsMap = new Map();
+      let totalCouponDiscount = 0;
 
-      const eligibleSubtotal = cartItems.reduce((sum, item) => {
-        const productSellerId = Number(item.seller_id);
-        if (productSellerId !== Number(cp.seller_id)) {
-          return sum;
+      for (const couponItemId of resolvedCouponIds) {
+        const cp = couponById.get(Number(couponItemId));
+        if (!cp) {
+          return res.status(400).json({ success: false, message: "One or more selected coupons are invalid or expired" });
         }
 
-        const productId = Number(item.product_id);
-        if (!appliesAllProducts && !selectedProducts.includes(productId)) {
-          return sum;
+        const sellerKey = Number(cp.seller_id);
+        const existingSellerCoupons = sellerCouponsMap.get(sellerKey) || [];
+        existingSellerCoupons.push(cp);
+        sellerCouponsMap.set(sellerKey, existingSellerCoupons);
+      }
+
+      for (const [sellerId, sellerCoupons] of sellerCouponsMap.entries()) {
+        const allProductsCoupons = sellerCoupons.filter((coupon) => Boolean(coupon.applies_all_products));
+        if (allProductsCoupons.length > 1) {
+          return res.status(400).json({
+            success: false,
+            message: `Only one all-products coupon can be used for seller ${sellerId}`,
+          });
         }
 
-        return sum + Number(item.item_price || 0) * Number(item.quantity || 0);
-      }, 0);
+        if (allProductsCoupons.length === 1 && sellerCoupons.length > 1) {
+          return res.status(400).json({
+            success: false,
+            message: `All-products coupon cannot be combined with individual coupons for seller ${sellerId}`,
+          });
+        }
 
-      if (eligibleSubtotal <= 0) {
-        return res.status(400).json({ success: false, message: "Coupon is not applicable to products in your cart" });
+        const alreadyCoveredProducts = new Set();
+
+        for (const cp of sellerCoupons) {
+          const appliesAllProducts = Boolean(cp.applies_all_products);
+          const selectedProducts = Array.isArray(cp.product_ids)
+            ? cp.product_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+            : [];
+
+          if (!appliesAllProducts) {
+            for (const productId of selectedProducts) {
+              if (alreadyCoveredProducts.has(productId)) {
+                return res.status(400).json({
+                  success: false,
+                  message: `Overlapping product coupons are not allowed for seller ${sellerId}`,
+                });
+              }
+            }
+
+            for (const productId of selectedProducts) {
+              alreadyCoveredProducts.add(productId);
+            }
+          }
+
+          const eligibleSubtotal = cartItems.reduce((sum, item) => {
+            const productSellerId = Number(item.seller_id);
+            if (productSellerId !== Number(cp.seller_id)) {
+              return sum;
+            }
+
+            const productId = Number(item.product_id);
+            if (!appliesAllProducts && !selectedProducts.includes(productId)) {
+              return sum;
+            }
+
+            return sum + Number(item.item_price || 0) * Number(item.quantity || 0);
+          }, 0);
+
+          const eligibleQuantity = cartItems.reduce((sum, item) => {
+            const productSellerId = Number(item.seller_id);
+            if (productSellerId !== Number(cp.seller_id)) {
+              return sum;
+            }
+
+            const productId = Number(item.product_id);
+            if (!appliesAllProducts && !selectedProducts.includes(productId)) {
+              return sum;
+            }
+
+            return sum + Number(item.quantity || 0);
+          }, 0);
+
+          if (eligibleSubtotal <= 0 || eligibleQuantity <= 0) {
+            return res.status(400).json({
+              success: false,
+              message: `Coupon ${cp.code || cp.coupon_id} is not applicable to products in your cart`,
+            });
+          }
+
+          const discountForCoupon = calculateDiscountAmount({ coupon: cp, eligibleSubtotal, eligibleQuantity });
+          if (discountForCoupon <= 0) {
+            return res.status(400).json({
+              success: false,
+              message: `Cart does not meet requirements for coupon ${cp.code || cp.coupon_id}`,
+            });
+          }
+
+          totalCouponDiscount += discountForCoupon;
+        }
       }
 
-      couponDiscount = calculateDiscountAmount({ coupon: cp, eligibleSubtotal });
-      if (couponDiscount <= 0) {
-        return res.status(400).json({ success: false, message: "Cart does not meet this coupon requirements" });
-      }
-
+      couponDiscount = Math.min(totalCouponDiscount, subtotal);
       totalAmount = Math.max(0, subtotal - couponDiscount);
+      resolvedCouponId = resolvedCouponIds[0] ?? null;
     }
 
     let resolvedAddressId = address_id ?? null;

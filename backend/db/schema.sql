@@ -292,7 +292,7 @@ CREATE TABLE IF NOT EXISTS Review_Seller (
     FOREIGN KEY (seller_id) REFERENCES Sellers(seller_id)
 );
 
--- ===================== COMPUTED SQL FUNCTIONS =====================
+-- =====================FUNCTIONS =====================
 
 DROP FUNCTION IF EXISTS fn_seller_order_history_count(INT);
 CREATE FUNCTION fn_seller_order_history_count(p_seller_id INT)
@@ -322,7 +322,7 @@ AS $$
       AND UPPER(COALESCE(o.order_status, '')) NOT IN ('DELIVERED', 'CANCELLED', 'REJECTED', 'SUCCESSFUL');
 $$;
 
--- ===================== SIMPLE SQL PROCEDURES =====================
+-- =====================PROCEDURES =====================
 
 DROP PROCEDURE IF EXISTS proc_upsert_seller_contacts(INT, VARCHAR, VARCHAR);
 CREATE PROCEDURE proc_upsert_seller_contacts(
@@ -370,7 +370,7 @@ BEGIN
 END;
 $$;
 
--- ===================== SIMPLE BUSINESS TRIGGERS =====================
+-- =====================TRIGGERS =====================
 
 DROP TRIGGER IF EXISTS trg_product_requires_verified_seller ON Product;
 DROP FUNCTION IF EXISTS fn_product_requires_verified_seller();

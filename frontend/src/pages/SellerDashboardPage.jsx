@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Phone, MapPin, Star, Package, Plus, Edit, Trash2 } from 'lucide-react';
-import { createProduct, createSellerCoupon, createSellerReview, deleteProduct, getProduct, getSeller, getSellerCoupons, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
+import { createProduct, createSellerCoupon, createSellerReview, deleteProduct, deleteSellerCoupon, getProduct, getSeller, getSellerCoupons, getSellerOrders, getSellerReviews, getProducts, getSellerSalesSummary, sellerRespondToOrder, updateProduct } from '../api';
 import { useAuth } from '../context/AuthContext';
 import StarRating from '../components/StarRating';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -66,6 +66,8 @@ export default function SellerDashboardPage() {
   const [brandOptions, setBrandOptions] = useState([]);
   const [coupons, setCoupons] = useState([]);
   const [couponSubmitting, setCouponSubmitting] = useState(false);
+  const [couponDeletingId, setCouponDeletingId] = useState(null);
+  const [expandedCouponOrderId, setExpandedCouponOrderId] = useState(null);
   const [productForm, setProductForm] = useState({
     product_name: '',
     description: '',
@@ -503,6 +505,41 @@ export default function SellerDashboardPage() {
         return;
       }
 
+      if (!/^[A-Z0-9_-]{3,50}$/.test(payload.code)) {
+        setActionError('Coupon code must be 3-50 characters and only use A-Z, 0-9, _ or -.');
+        return;
+      }
+
+      if (payload.discount_value <= 0) {
+        setActionError('Discount value must be greater than 0.');
+        return;
+      }
+
+      if (payload.discount_type === 'PERCENT' && payload.discount_value > 100) {
+        setActionError('Percent discount cannot be greater than 100%.');
+        return;
+      }
+
+      if (payload.min_order_amount !== null && (Number.isNaN(payload.min_order_amount) || payload.min_order_amount < 0)) {
+        setActionError('Min order amount must be a non-negative number.');
+        return;
+      }
+
+      if (payload.discount_type === 'PERCENT') {
+        if (payload.max_discount_amount !== null && (Number.isNaN(payload.max_discount_amount) || payload.max_discount_amount <= 0)) {
+          setActionError('Max discount amount must be greater than 0 for percent coupons.');
+          return;
+        }
+      } else if (payload.max_discount_amount !== null) {
+        setActionError('Max discount amount is only allowed for percent coupons.');
+        return;
+      }
+
+      if (new Date(payload.start_date).getTime() > new Date(payload.end_date).getTime()) {
+        setActionError('Start date must be before or equal to end date.');
+        return;
+      }
+
       const response = await createSellerCoupon(targetSellerId, payload);
       if (!response?.success) {
         setActionError(response?.message || 'Failed to create coupon.');
@@ -528,6 +565,35 @@ export default function SellerDashboardPage() {
       setActionError(err?.message || 'Failed to create coupon.');
     } finally {
       setCouponSubmitting(false);
+    }
+  };
+
+  const handleDeleteCoupon = async (couponId) => {
+    if (!isOwnDashboard || !targetSellerId) {
+      setActionError('You can only manage coupons from your own dashboard.');
+      return;
+    }
+
+    const confirmed = window.confirm('Are you sure you want to delete this coupon?');
+    if (!confirmed) return;
+
+    setActionError('');
+    setActionSuccess('');
+    setCouponDeletingId(couponId);
+
+    try {
+      const response = await deleteSellerCoupon(targetSellerId, couponId);
+      if (!response?.success) {
+        setActionError(response?.message || 'Failed to delete coupon.');
+        return;
+      }
+
+      setActionSuccess(response?.message || 'Coupon deleted successfully.');
+      await refreshSellerCoupons();
+    } catch (err) {
+      setActionError(err?.message || 'Failed to delete coupon.');
+    } finally {
+      setCouponDeletingId(null);
     }
   };
 
@@ -1050,6 +1116,9 @@ export default function SellerDashboardPage() {
           {isOwnDashboard && (
             <form onSubmit={handleCouponSubmit} className="rounded-xl border border-gray-800 bg-gray-900 p-4 sm:p-5 space-y-4">
               <h3 className="text-sm font-semibold text-gray-200">Create Coupon</h3>
+              <p className="text-xs text-gray-400">
+                Rule: if a buyer uses an all-products coupon for your store, other store coupons will not be combined. Multiple individual coupons can combine only when they target different products.
+              </p>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <input
@@ -1078,6 +1147,7 @@ export default function SellerDashboardPage() {
                   required
                   type="number"
                   min="0"
+                  max={couponForm.discount_type === 'PERCENT' ? '100' : undefined}
                   step="0.01"
                   value={couponForm.discount_value}
                   onChange={(e) => handleCouponFormChange('discount_value', e.target.value)}
@@ -1180,9 +1250,22 @@ export default function SellerDashboardPage() {
                       <p className="text-sm font-semibold text-gray-100">{coupon.coupon_name || coupon.code}</p>
                       <p className="text-xs text-violet-300">Code: {coupon.code}</p>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs ${coupon.is_active ? 'bg-emerald-500/10 text-emerald-300' : 'bg-gray-700 text-gray-300'}`}>
-                      {coupon.is_active ? 'Active' : 'Inactive'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-1 text-xs ${coupon.is_active ? 'bg-emerald-500/10 text-emerald-300' : 'bg-gray-700 text-gray-300'}`}>
+                        {coupon.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                      {isOwnDashboard && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCoupon(coupon.coupon_id)}
+                          disabled={couponDeletingId === coupon.coupon_id}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-300 transition hover:bg-red-500/10 disabled:opacity-60"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          {couponDeletingId === coupon.coupon_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <p className="mt-2 text-xs text-gray-400">{coupon.description || 'No description'}</p>
@@ -1239,28 +1322,85 @@ export default function SellerDashboardPage() {
                     <tr className="border-b border-gray-800 text-left text-gray-400">
                       <th className="px-2 py-2">Date & Time</th>
                       <th className="px-2 py-2">Product</th>
+                      <th className="px-2 py-2">Coupon</th>
                       <th className="px-2 py-2">Qty</th>
                       <th className="px-2 py-2">Unit Price</th>
                       <th className="px-2 py-2">Line Total</th>
+                      <th className="px-2 py-2">Deducted (Order)</th>
+                      <th className="px-2 py-2">Final (Order)</th>
                       <th className="px-2 py-2">Order</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {salesSummary.sales_history.map((row) => (
-                      <tr key={row.order_item_id} className="border-b border-gray-800/70 text-gray-300">
-                        <td className="px-2 py-2 whitespace-nowrap">{row.order_date ? new Date(row.order_date).toLocaleString() : '-'}</td>
-                        <td className="px-2 py-2">
-                          <div>{row.product_name}</div>
-                          {(row.variation_type || row.variation_value) && (
-                            <div className="text-xs text-gray-500">{row.variation_type}: {row.variation_value}</div>
+                    {salesSummary.sales_history.map((row, index) => {
+                      const hasCoupon = Boolean(row.coupon_code);
+                      const isExpanded = expandedCouponOrderId === row.order_id;
+                      const isFirstRowForOrder = index === 0 || salesSummary.sales_history[index - 1]?.order_id !== row.order_id;
+
+                      return (
+                        <>
+                          <tr key={row.order_item_id} className="border-b border-gray-800/70 text-gray-300">
+                            <td className="px-2 py-2 whitespace-nowrap">{row.order_date ? new Date(row.order_date).toLocaleString() : '-'}</td>
+                            <td className="px-2 py-2">
+                              <div>{row.product_name}</div>
+                              {(row.variation_type || row.variation_value) && (
+                                <div className="text-xs text-gray-500">{row.variation_type}: {row.variation_value}</div>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-xs text-emerald-300">
+                              {hasCoupon ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedCouponOrderId((prev) => (prev === row.order_id ? null : row.order_id))}
+                                  className="text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
+                                >
+                                  {row.coupon_name ? `${row.coupon_code} (${row.coupon_name})` : row.coupon_code}
+                                </button>
+                              ) : '-'}
+                            </td>
+                            <td className="px-2 py-2">{row.quantity}</td>
+                            <td className="px-2 py-2">৳{Number(row.unit_price || 0).toLocaleString('en-BD')}</td>
+                            <td className="px-2 py-2">৳{Number(row.line_total || 0).toLocaleString('en-BD')}</td>
+                            <td className="px-2 py-2 text-red-300">-৳{Number(row.display_discount_amount ?? row.order_discount_amount ?? 0).toLocaleString('en-BD')}</td>
+                            <td className="px-2 py-2 text-emerald-300">৳{Number(row.display_final_amount ?? row.order_total_amount ?? 0).toLocaleString('en-BD')}</td>
+                            <td className="px-2 py-2">#{row.order_id}</td>
+                          </tr>
+
+                          {hasCoupon && isExpanded && isFirstRowForOrder && (
+                            <tr key={`coupon-details-${row.order_id}`} className="border-b border-gray-800/70 bg-gray-800/40 text-gray-300">
+                              <td colSpan={9} className="px-3 py-3 text-xs">
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                  <p>
+                                    Coupon Rule:{' '}
+                                    <span className="text-gray-100">
+                                      {String(row.discount_type || '').toUpperCase() === 'PERCENT'
+                                        ? `${Number(row.discount_value || 0)}%${row.max_discount_amount ? ` (Max ৳${Number(row.max_discount_amount).toLocaleString('en-BD')})` : ''}`
+                                        : `৳${Number(row.discount_value || 0).toLocaleString('en-BD')} fixed`}
+                                    </span>
+                                  </p>
+                                  <p>
+                                    Min Order: <span className="text-gray-100">৳{Number(row.min_order_amount || 0).toLocaleString('en-BD')}</span>
+                                  </p>
+                                  <p>
+                                    Basis:{' '}
+                                    <span className="text-gray-100">
+                                      {row.applies_all_products
+                                        ? 'All products of this store'
+                                        : (Array.isArray(row.coupon_products) && row.coupon_products.length > 0
+                                            ? `Selected products: ${row.coupon_products.map((item) => item.product_name).join(', ')}`
+                                            : 'Selected products')}
+                                    </span>
+                                  </p>
+                                  <p>
+                                    Final Price (Order): <span className="text-emerald-300">৳{Number(row.display_final_amount ?? row.order_total_amount ?? 0).toLocaleString('en-BD')}</span>
+                                  </p>
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                        </td>
-                        <td className="px-2 py-2">{row.quantity}</td>
-                        <td className="px-2 py-2">৳{Number(row.unit_price || 0).toLocaleString('en-BD')}</td>
-                        <td className="px-2 py-2">৳{Number(row.line_total || 0).toLocaleString('en-BD')}</td>
-                        <td className="px-2 py-2">#{row.order_id}</td>
-                      </tr>
-                    ))}
+                        </>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
